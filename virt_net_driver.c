@@ -12,6 +12,7 @@ MODULE_DESCRIPTION("Virtual network driver for Linux");
 MODULE_VERSION("0.01");
 
 static struct net_device *virt_net_dev;
+static struct virt_adapter_context *context;
 
 
 static int init_virt_hw_resource(struct net_device *dev)
@@ -219,6 +220,13 @@ static int virt_net_driver_cfg80211_disconnect(struct wiphy *wiphy, struct net_d
 static int __init virt_net_driver_init(void)
 {
     int ret;
+
+    /* Allocate and initialize adapter context */ 
+    context = kmalloc(sizeof(struct adapter_context), GFP_KERNEL);
+    if(!context) {
+      printk(KERN_ERR "%s: Failed to allocate adapter_context\n", VIRT_NET_DRIVER_NAME);
+      return -ENOMEM;
+    }
 
     /* Allocate and initialize net_device */
     virt_net_dev = alloc_etherdev(sizeof(struct virt_net_dev_priv));

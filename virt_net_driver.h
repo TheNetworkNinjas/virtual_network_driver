@@ -32,6 +32,13 @@ struct virt_net_dev_priv {
     unsigned long counter;
 };
 
+/* Program context */
+struct virt_adapter_context {
+    struct list_head ap_list;   // List of access points
+    struct list_head if_list;   // List of virtual interfaces
+    spinlock_t       lock;      // Lock for modifying program context
+}
+
 /* Function Prototypes */
 static int __init virt_net_driver_init(void);
 static void __exit virt_net_driver_exit(void);
