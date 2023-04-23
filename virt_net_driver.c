@@ -4,7 +4,14 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
+#include <linux/netdevice.h>
+#include <linux/nl80211.h>
+#include <linux/workqueue.h> // work struct
+#include <semaphore.h>
 #include "virt_net_driver.h"
+
+#define SSID "PrettyFly4aWiFi"
+#define SSID_DEMO_SIZE (sizeof("PrettyFly4aWiFi") - 1)
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Craig Opie");
@@ -13,7 +20,35 @@ MODULE_AUTHOR("Lydia Sollis");
 MODULE_DESCRIPTION("Virtual network driver for Linux");
 MODULE_VERSION("0.01");
 
+typedef unsigned short u16;
+
+/* virtual driver context */
+struct virt_net_driver_context {
+    struct net_device *ndev; // pointer to network device associated with the driver
+    struct wiphy *wiphy; // pointer to wiphy structure that represents the hardware the device is operating on
+    /* DEMO FEATURES */
+    struct semaphone sem; // synchronize access to shared resources between threads
+    struct work_struct ws_connect; // work item to connect to wireless network
+    struct work_struct ws_disconnect; // work item to disconnect from wireless network
+    struct work_struct ws_scan; // work item to scan for available network
+    char connecting_ssid[sizeof(SSID)]; // char array to store SSID
+    u16 disconnect_reason_code; // int to store reason for disconnecting from the wireless network
+    struct cfg80211_scan_request *scan_request; // pointer to structure that represents the parameters of the scan request
+};
+
+/* wiphy private data */
+struct virt_net_driver_wiphy_priv_context {
+    struct virt_net_driver_context *virtContext;
+};
+
+/* private data of net_device */
+struct virt_net_driver_ndev_priv_context {
+    struct virt_net_driver_context *virtContext;
+    struct wireless_dev wirelessDev; // represents wireless device together with net_device
+};
+
 static struct net_device *virt_net_dev;
+static struct virt_net_driver_context *context;
 
 static int __init virt_net_driver_init(void)
 {
@@ -29,6 +64,16 @@ static int __init virt_net_driver_init(void)
     /* Initialize net_device fields and operations */
     // TODO: Fill in necessary fields and function pointers in virt_net_dev
 
+    /* Allocate and initialize net_device_driver_context */
+    context = kzalloc(sizeof(struct struct virt_net_driver_context), GFP_KERNEL);
+    if (!context) {
+        printk(KERN_ERR "%s: Failed to allocate context\n", VIRT_NET_DRIVER_NAME);
+        return -ENOMEM;
+    }
+
+    /* Initialize context fields */
+    // TODO: Fill in necessary fields for context
+
     /* Register the network device with the kernel */
     ret = register_netdev(virt_net_dev);
     if (ret) {
@@ -43,11 +88,19 @@ static int __init virt_net_driver_init(void)
 
 static void __exit virt_net_driver_exit(void)
 {
+    if (context == NULL) {
+        return;
+    }
     /* Unregister the network device */
     unregister_netdev(virt_net_dev);
 
     /* Free the net_device memory */
     free_netdev(virt_net_dev);
+
+    /* free driver context */
+    wiphy_unregister(context->wiphy);
+    wiphy_free(context->wiphy);
+    kfree(context);
 
     printk(KERN_INFO "%s: Virtual network driver unloaded\n", VIRT_NET_DRIVER_NAME);
 }
