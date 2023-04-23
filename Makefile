@@ -1,10 +1,10 @@
 obj-m += virt_net_driver.o
 
 all:
-	make -C /lib/modules/$(shell uname -r)/build M=$(shell pwd) modules
+	make -w -C /lib/modules/$(shell uname -r)/build M=$(shell pwd) modules
 
 clean:
-	make -C /lib/modules/$(shell uname -r)/build M=$(shell pwd) clean
+	make -w -C /lib/modules/$(shell uname -r)/build M=$(shell pwd) clean
 
 
 
