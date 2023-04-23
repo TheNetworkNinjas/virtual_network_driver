@@ -5,7 +5,7 @@
 #include <linux/nl80211.h>
 #include <linux/slab.h>
 #include <linux/workqueue.h> // work struct
-#include <semaphore.h>
+#include <linux/semaphore.h>
 #include <linux/kfifo.h>
 #include "virt_net_driver.h"
 

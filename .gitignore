@@ -4,3 +4,4 @@
 *.o
 *.symvers
 *.order
+*.d
