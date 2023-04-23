@@ -1,9 +1,7 @@
-/*
-* virt_net_driver - Virtual network adapter for Linux
-*/
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
+#include <linux/kfifo.h>
 #include "virt_net_driver.h"
 
 MODULE_LICENSE("GPL");
@@ -27,7 +25,31 @@ static int __init virt_net_driver_init(void)
     }
 
     /* Initialize net_device fields and operations */
+	/* Set the device's name */
+	strlcpy(virt_net_dev->name, VIRT_NET_DRIVER_NAME, sizeof(virt_net_dev->name));
+
+	/* Assign the net_device operations */
+	static const struct net_device_ops virt_net_dev_ops = {
+		.ndo_open = virt_net_driver_open,
+		.ndo_stop = virt_net_driver_stop,
+		.ndo_start_xmit = virt_net_driver_start_xmit,
+		.ndo_set_mac_address = virt_net_driver_set_mac_address,
+		.ndo_do_ioctl = virt_net_driver_do_ioctl,
+	};
+
+	virt_net_dev->netdev_ops = &virt_net_dev_ops;
+
+	/* Assign the ethtool operations */
     // TODO: Fill in necessary fields and function pointers in virt_net_dev
+	static const struct ethtool_ops virt_net_ethtool_ops = {
+		// .get_drvinfo = virt_net_driver_get_drvinfo,
+		// .get_link = virt_net_driver_get_link,
+		// .get_link_ksettings = virt_net_driver_get_link_ksettings,
+		// .set_link_ksettings = virt_net_driver_set_link_ksettings,
+		// ... other ethtool operations
+	};
+
+	virt_net_dev->ethtool_ops = &virt_net_ethtool_ops;
 
     /* Register the network device with the kernel */
     ret = register_netdev(virt_net_dev);
@@ -52,12 +74,67 @@ static void __exit virt_net_driver_exit(void)
     printk(KERN_INFO "%s: Virtual network driver unloaded\n", VIRT_NET_DRIVER_NAME);
 }
 
+static int init_virt_hw_resource(struct net_device *dev)
+{
+    struct virt_net_dev_priv *priv = netdev_priv(dev);
+    int ret;
+
+    /* Initialize the virtual FIFO buffer */
+    spin_lock_init(&priv->tx_fifo.lock);
+    ret = kfifo_alloc(&priv->tx_fifo.fifo, VIRT_FIFO_SIZE, GFP_KERNEL);
+    if (ret) {
+        printk(KERN_ERR "%s: Failed to allocate virtual FIFO buffer\n", dev->name);
+        return ret;
+    }
+
+    /* Initialize the timer */
+    timer_setup(&priv->timer, virt_net_timer_callback, 0);
+    priv->timer.expires = jiffies + msecs_to_jiffies(1000); // Set the timer to expire in 1 second
+    add_timer(&priv->timer);
+
+    return 0;
+}
+
+static void release_virt_hw_resource(struct net_device *dev)
+{
+    struct virt_net_dev_priv *priv = netdev_priv(dev);
+
+    /* Release the virtual FIFO buffer */
+    kfifo_free(&priv->tx_fifo.fifo);
+
+    /* Delete the timer */
+    del_timer_sync(&priv->timer);
+}
+
+static void virt_net_timer_callback(struct timer_list *t)
+{
+    struct virt_net_dev_priv *priv = from_timer(priv, t, timer);
+    struct net_device *dev = priv->netdev;
+
+    // Increment the counter
+    priv->counter++;
+
+    // Print a message
+    printk(KERN_INFO "%s: Timer tick, counter = %lu\n", dev->name, priv->counter);
+
+    // Reschedule the timer
+    mod_timer(&priv->timer, jiffies + msecs_to_jiffies(1000));
+}
+
 static int virt_net_driver_open(struct net_device *dev)
 {
     struct virt_net_dev_priv *priv = netdev_priv(dev);
 
     /* Initialize any resources required for the virtual network driver */
-    // TODO: Initialize resources here
+    int ret = init_virt_hw_resource(dev);
+    if (ret) {
+        printk(KERN_ERR "%s: Failed to initialize hardware resource\n", dev->name);
+        return ret;
+    }
+
+    // Initialize a kernel timer
+    timer_setup(&priv->timer, virt_net_timer_callback, 0);
+    mod_timer(&priv->timer, jiffies + msecs_to_jiffies(1000));
 
     /* Start the network device's transmit queue */
     netif_start_queue(dev);
@@ -69,28 +146,61 @@ static int virt_net_driver_open(struct net_device *dev)
 
 static int virt_net_driver_stop(struct net_device *dev)
 {
+    struct virt_net_dev_priv *priv = netdev_priv(dev);
+
     /* Stop the network device's transmit queue */
     netif_stop_queue(dev);
 
     /* Cleanup any resources allocated for the virtual network driver */
-    // TODO: Cleanup resources here
+    release_virt_hw_resource(dev);
+
+    // Delete the kernel timer
+    del_timer_sync(&priv->timer);
 
     printk(KERN_INFO "%s: Virtual network device closed\n", dev->name);
 
     return 0;
 }
 
-static netdev_tx_t virt_net_driver_start_xmit(struct sk_buff *skb, struct net_device *dev)
+static void virt_net_tx_complete(struct net_device *dev, struct sk_buff *skb)
 {
-    /* Process and transmit the packet using the virtual network driver */
-    // TODO: Transmit packet here
-
-    /* Update network device statistics */
     dev->stats.tx_packets++;
     dev->stats.tx_bytes += skb->len;
 
-    /* Free the skb */
+    // netif_tx_complete(dev, skb);
     dev_kfree_skb(skb);
+}
+
+static netdev_tx_t virt_net_driver_start_xmit(struct sk_buff *skb, struct net_device *dev)
+{
+    struct virt_net_dev_priv *priv = netdev_priv(dev);
+    int ret;
+
+    /* Lock the virtual FIFO buffer */
+    spin_lock_bh(&priv->tx_fifo.lock);
+
+    /* Add the skb to the virtual FIFO buffer */
+    ret = kfifo_in(&priv->tx_fifo.fifo, &skb, sizeof(skb));
+    if (ret != sizeof(skb)) {
+        printk(KERN_ERR "%s: Failed to enqueue packet to the virtual FIFO buffer\n", dev->name);
+
+        /* Unlock the virtual FIFO buffer */
+        spin_unlock_bh(&priv->tx_fifo.lock);
+
+        /* Update network device statistics */
+        dev->stats.tx_dropped++;
+
+        /* Free the skb */
+        dev_kfree_skb(skb);
+
+        return NETDEV_TX_BUSY;
+    }
+
+    /* Unlock the virtual FIFO buffer */
+    spin_unlock_bh(&priv->tx_fifo.lock);
+
+    /* Simulate a successful transmission by calling virt_net_tx_complete */
+    virt_net_tx_complete(dev, skb);
 
     return NETDEV_TX_OK;
 }
