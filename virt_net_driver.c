@@ -2,6 +2,7 @@
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/kfifo.h>
+#include <linux/list.h>
 #include "virt_net_driver.h"
 
 MODULE_LICENSE("GPL");
@@ -222,7 +223,8 @@ static int __init virt_net_driver_init(void)
     int ret;
 
     /* Allocate and initialize adapter context */ 
-    context = kmalloc(sizeof(struct adapter_context), GFP_KERNEL);
+	printk(KERN_INFO "%d\n", sizeof(context));
+    context = kmalloc(sizeof(struct virt_adapter_context), GFP_KERNEL);
     if(!context) {
       printk(KERN_ERR "%s: Failed to allocate adapter_context\n", VIRT_NET_DRIVER_NAME);
       return -ENOMEM;
