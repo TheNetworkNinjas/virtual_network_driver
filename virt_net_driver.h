@@ -11,6 +11,7 @@
 /* Constants */
 #define VIRT_NET_DRIVER_NAME "virt_net_driver"
 #define VIRT_NET_DRIVER_VERSION "0.01"
+#define MAX_NUM_PACKETS 128
 #define VIRT_FIFO_SIZE 4096
 
 // Virtual FIFO buffer for packet transmission
@@ -37,6 +38,7 @@ static int __init virt_net_driver_init(void);
 static void __exit virt_net_driver_exit(void);
 static int init_virt_hw_resource(struct net_device *dev);
 static void release_virt_hw_resource(struct net_device *dev);
+static int is_tx_fifo_full(struct virt_fifo *tx_fifo);
 
 /* Network Device Operations */
 static void virt_net_timer_callback(struct timer_list *t);

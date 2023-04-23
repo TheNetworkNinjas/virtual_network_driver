@@ -105,6 +105,11 @@ static void release_virt_hw_resource(struct net_device *dev)
     del_timer_sync(&priv->timer);
 }
 
+static int is_tx_fifo_full(struct virt_fifo *tx_fifo)
+{
+    return (kfifo_len(&tx_fifo->fifo) / sizeof(struct sk_buff *)) >= MAX_NUM_PACKETS;
+}
+
 static void virt_net_timer_callback(struct timer_list *t)
 {
     struct virt_net_dev_priv *priv = from_timer(priv, t, timer);
@@ -180,6 +185,25 @@ static netdev_tx_t virt_net_driver_start_xmit(struct sk_buff *skb, struct net_de
 
     /* Lock the virtual FIFO buffer */
     spin_lock_bh(&priv->tx_fifo.lock);
+
+    /* Check if the buffer is full */
+    if (is_tx_fifo_full(&priv->tx_fifo)) {
+        printk(KERN_ERR "%s: The virtual FIFO buffer is full\n", dev->name);
+
+        /* Unlock the virtual FIFO buffer */
+        spin_unlock_bh(&priv->tx_fifo.lock);
+
+        /* Update network device statistics */
+        dev->stats.tx_fifo_errors++;
+
+        /* Stop the network device's transmit queue */
+        netif_stop_queue(dev);
+
+        /* Free the skb */
+        dev_kfree_skb(skb);
+
+        return NETDEV_TX_BUSY;
+    }
 
     /* Add the skb to the virtual FIFO buffer */
     ret = kfifo_in(&priv->tx_fifo.fifo, &skb, sizeof(skb));
