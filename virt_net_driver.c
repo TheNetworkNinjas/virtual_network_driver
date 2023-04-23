@@ -11,6 +11,8 @@
 
 #define SSID "PrettyFly4aWiFi"
 #define SSID_DEMO_SIZE (sizeof("PrettyFly4aWiFi") - 1)
+#define MAX_VIF_COUNT 3
+#define MAX_AP_COUNT 1
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Craig Opie");
@@ -24,8 +26,8 @@ typedef unsigned short u16;
 void *buffer;
 size_t buffer_size = 512;
 
-/* virtual driver context */
-struct virt_net_driver_context {
+/* virtual interface*/
+struct virt_net_dev {
     struct net_device *ndev; // pointer to network device associated with the driver
     struct wiphy *wiphy; // pointer to wiphy structure that represents the hardware the device is operating on
     /* DEMO FEATURES */
@@ -39,19 +41,29 @@ struct virt_net_driver_context {
 };
 
 /* wiphy private data */
-struct virt_net_driver_wiphy_priv_context {
-    struct virt_net_driver_context *virtContext;
+struct virt_net_dev_wiphy_priv {
+    struct virt_net_dev *virtContext;
 };
 
 /* private data of net_device */
-struct virt_net_driver_ndev_priv_context {
-    struct virt_net_driver_context *virtContext;
+struct virt_net_dev_priv {
+    struct virt_net_dev *virtContext;
     struct wireless_dev wirelessDev; // represents wireless device together with net_device
 };
 
-static struct net_device *virt_net_dev;
-static struct virt_net_driver_context *context;
+enum adapter_state { READY, SHUTDOWN, BLOCKING }
+/* Program context */
+static struct context {
+    struct semaphore sem;
+    struct virt_net_dev_priv interface_list[MAX_VIF_COUNT];   // list of interfaces
+    int interface_count;                                      // # of interfaces
+    struct virt_net_dev_priv ap_list[MAX_AP_COUNT];           // list of APs
+    int AP_count;                                             // # of APs
+    enum adapter_state state;                                 // program state
+}
 
+static struct net_device *virt_net_dev;
+static struct context *adapter_context;
 
 static int init_virt_hw_resource(struct net_device *dev)
 {
@@ -290,9 +302,9 @@ static int __init virt_net_driver_init(void)
 
 	virt_net_dev->ethtool_ops = &virt_net_ethtool_ops;
 
-    /* Allocate and initialize net_device_driver_context */
-    context = kzalloc(sizeof(struct struct virt_net_driver_context), GFP_KERNEL);
-    if (!context) {
+    /* Allocate and initialize adapter context */
+    adapter_context = kzalloc(sizeof(struct context), GFP_KERNEL);
+    if (!adapter_context) {
         printk(KERN_ERR "%s: Failed to allocate context\n", VIRT_NET_DRIVER_NAME);
         return -ENOMEM;
     }
