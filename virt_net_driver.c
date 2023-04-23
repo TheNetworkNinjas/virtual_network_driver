@@ -13,65 +13,6 @@ MODULE_VERSION("0.01");
 
 static struct net_device *virt_net_dev;
 
-static int __init virt_net_driver_init(void)
-{
-    int ret;
-
-    /* Allocate and initialize net_device */
-    virt_net_dev = alloc_etherdev(sizeof(struct virt_net_dev_priv));
-    if (!virt_net_dev) {
-        printk(KERN_ERR "%s: Failed to allocate net_device\n", VIRT_NET_DRIVER_NAME);
-        return -ENOMEM;
-    }
-
-    /* Initialize net_device fields and operations */
-	/* Set the device's name */
-	strlcpy(virt_net_dev->name, VIRT_NET_DRIVER_NAME, sizeof(virt_net_dev->name));
-	/* Assign the net_device operations */
-	static const struct net_device_ops virt_net_dev_ops = {
-		.ndo_open = virt_net_driver_open,
-		.ndo_stop = virt_net_driver_stop,
-		.ndo_start_xmit = virt_net_driver_start_xmit,
-		.ndo_set_mac_address = virt_net_driver_set_mac_address,
-		.ndo_do_ioctl = virt_net_driver_do_ioctl,
-	};
-
-	virt_net_dev->netdev_ops = &virt_net_dev_ops;
-
-	/* Assign the ethtool operations */
-    // TODO: Fill in necessary fields and function pointers in virt_net_dev
-	static const struct ethtool_ops virt_net_ethtool_ops = {
-		// .get_drvinfo = virt_net_driver_get_drvinfo,
-		// .get_link = virt_net_driver_get_link,
-		// .get_link_ksettings = virt_net_driver_get_link_ksettings,
-		// .set_link_ksettings = virt_net_driver_set_link_ksettings,
-		// ... other ethtool operations
-	};
-
-	virt_net_dev->ethtool_ops = &virt_net_ethtool_ops;
-
-    /* Register the network device with the kernel */
-    ret = register_netdev(virt_net_dev);
-    if (ret) {
-        printk(KERN_ERR "%s: Failed to register net_device: %d\n", VIRT_NET_DRIVER_NAME, ret);
-        free_netdev(virt_net_dev);
-        return ret;
-    }
-
-    printk(KERN_INFO "%s: Virtual network driver loaded\n", VIRT_NET_DRIVER_NAME);
-    return 0;
-}
-
-static void __exit virt_net_driver_exit(void)
-{
-    /* Unregister the network device */
-    unregister_netdev(virt_net_dev);
-
-    /* Free the net_device memory */
-    free_netdev(virt_net_dev);
-
-    printk(KERN_INFO "%s: Virtual network driver unloaded\n", VIRT_NET_DRIVER_NAME);
-}
 
 static int init_virt_hw_resource(struct net_device *dev)
 {
@@ -273,6 +214,66 @@ static int virt_net_driver_cfg80211_disconnect(struct wiphy *wiphy, struct net_d
     printk(KERN_INFO "Virtual Wi-Fi disconnect initiated\n");
 
     return 0;
+}
+
+static int __init virt_net_driver_init(void)
+{
+    int ret;
+
+    /* Allocate and initialize net_device */
+    virt_net_dev = alloc_etherdev(sizeof(struct virt_net_dev_priv));
+    if (!virt_net_dev) {
+        printk(KERN_ERR "%s: Failed to allocate net_device\n", VIRT_NET_DRIVER_NAME);
+        return -ENOMEM;
+    }
+
+    /* Initialize net_device fields and operations */
+	/* Set the device's name */
+	strlcpy(virt_net_dev->name, VIRT_NET_DRIVER_NAME, sizeof(virt_net_dev->name));
+	/* Assign the net_device operations */
+	static const struct net_device_ops virt_net_dev_ops = {
+		.ndo_open = virt_net_driver_open,
+		.ndo_stop = virt_net_driver_stop,
+		.ndo_start_xmit = virt_net_driver_start_xmit,
+		.ndo_set_mac_address = virt_net_driver_set_mac_address,
+		.ndo_do_ioctl = virt_net_driver_do_ioctl,
+	};
+
+	virt_net_dev->netdev_ops = &virt_net_dev_ops;
+
+	/* Assign the ethtool operations */
+    // TODO: Fill in necessary fields and function pointers in virt_net_dev
+	static const struct ethtool_ops virt_net_ethtool_ops = {
+		// .get_drvinfo = virt_net_driver_get_drvinfo,
+		// .get_link = virt_net_driver_get_link,
+		// .get_link_ksettings = virt_net_driver_get_link_ksettings,
+		// .set_link_ksettings = virt_net_driver_set_link_ksettings,
+		// ... other ethtool operations
+	};
+
+	virt_net_dev->ethtool_ops = &virt_net_ethtool_ops;
+
+    /* Register the network device with the kernel */
+    ret = register_netdev(virt_net_dev);
+    if (ret) {
+        printk(KERN_ERR "%s: Failed to register net_device: %d\n", VIRT_NET_DRIVER_NAME, ret);
+        free_netdev(virt_net_dev);
+        return ret;
+    }
+
+    printk(KERN_INFO "%s: Virtual network driver loaded\n", VIRT_NET_DRIVER_NAME);
+    return 0;
+}
+
+static void __exit virt_net_driver_exit(void)
+{
+    /* Unregister the network device */
+    unregister_netdev(virt_net_dev);
+
+    /* Free the net_device memory */
+    free_netdev(virt_net_dev);
+
+    printk(KERN_INFO "%s: Virtual network driver unloaded\n", VIRT_NET_DRIVER_NAME);
 }
 
 module_init(virt_net_driver_init);
