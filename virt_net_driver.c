@@ -11,6 +11,8 @@
 
 #define SSID "PrettyFly4aWiFi"
 #define SSID_DEMO_SIZE (sizeof("PrettyFly4aWiFi") - 1)
+#define MAX_VIF_COUNT 3
+#define MAX_AP_COUNT 1
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Craig Opie");
@@ -24,8 +26,8 @@ typedef unsigned short u16;
 void *buffer;
 size_t buffer_size = 512;
 
-/* virtual driver context */
-struct virt_net_driver_context {
+/* virtual interface*/
+struct virt_net_dev {
     struct net_device *ndev; // pointer to network device associated with the driver
     struct wiphy *wiphy; // pointer to wiphy structure that represents the hardware the device is operating on
     /* DEMO FEATURES */
@@ -39,98 +41,29 @@ struct virt_net_driver_context {
 };
 
 /* wiphy private data */
-struct virt_net_driver_wiphy_priv_context {
-    struct virt_net_driver_context *virtContext;
+struct virt_net_dev_wiphy_priv {
+    struct virt_net_dev *virtContext;
 };
 
 /* private data of net_device */
-struct virt_net_driver_ndev_priv_context {
-    struct virt_net_driver_context *virtContext;
+struct virt_net_dev_priv {
+    struct virt_net_dev *virtContext;
     struct wireless_dev wirelessDev; // represents wireless device together with net_device
 };
 
+enum adapter_state { READY, SHUTDOWN, BLOCKING }
+/* Program context */
+static struct context {
+    struct semaphore sem;
+    struct virt_net_dev_priv interface_list[MAX_VIF_COUNT];   // list of interfaces
+    int interface_count;                                      // # of interfaces
+    struct virt_net_dev_priv ap_list[MAX_AP_COUNT];           // list of APs
+    int AP_count;                                             // # of APs
+    enum adapter_state state;                                 // program state
+}
+
 static struct net_device *virt_net_dev;
-static struct virt_net_driver_context *context;
-
-static int __init virt_net_driver_init(void)
-{
-    int ret;
-
-    /* Allocate and initialize net_device */
-    virt_net_dev = alloc_etherdev(sizeof(struct virt_net_dev_priv));
-    if (!virt_net_dev) {
-        printk(KERN_ERR "%s: Failed to allocate net_device\n", VIRT_NET_DRIVER_NAME);
-        return -ENOMEM;
-    }
-
-    /* Initialize net_device fields and operations */
-	/* Set the device's name */
-	strlcpy(virt_net_dev->name, VIRT_NET_DRIVER_NAME, sizeof(virt_net_dev->name));
-
-	/* Assign the net_device operations */
-	static const struct net_device_ops virt_net_dev_ops = {
-		.ndo_open = virt_net_driver_open,
-		.ndo_stop = virt_net_driver_stop,
-		.ndo_start_xmit = virt_net_driver_start_xmit,
-		.ndo_set_mac_address = virt_net_driver_set_mac_address,
-		.ndo_do_ioctl = virt_net_driver_do_ioctl,
-	};
-
-	virt_net_dev->netdev_ops = &virt_net_dev_ops;
-
-	/* Assign the ethtool operations */
-    // TODO: Fill in necessary fields and function pointers in virt_net_dev
-	static const struct ethtool_ops virt_net_ethtool_ops = {
-		// .get_drvinfo = virt_net_driver_get_drvinfo,
-		// .get_link = virt_net_driver_get_link,
-		// .get_link_ksettings = virt_net_driver_get_link_ksettings,
-		// .set_link_ksettings = virt_net_driver_set_link_ksettings,
-		// ... other ethtool operations
-	};
-
-	virt_net_dev->ethtool_ops = &virt_net_ethtool_ops;
-
-    /* Allocate and initialize net_device_driver_context */
-    context = kzalloc(sizeof(struct struct virt_net_driver_context), GFP_KERNEL);
-    if (!context) {
-        printk(KERN_ERR "%s: Failed to allocate context\n", VIRT_NET_DRIVER_NAME);
-        return -ENOMEM;
-    }
-
-    /* Initialize context fields */
-    // TODO: Fill in necessary fields for context
-
-    /* Register the network device with the kernel */
-    ret = register_netdev(virt_net_dev);
-    if (ret) {
-        printk(KERN_ERR "%s: Failed to register net_device: %d\n", VIRT_NET_DRIVER_NAME, ret);
-        free_netdev(virt_net_dev);
-        return ret;
-    }
-
-    printk(KERN_INFO "%s: Virtual network driver loaded\n", VIRT_NET_DRIVER_NAME);
-    return 0;
-}
-
-static void __exit virt_net_driver_exit(void)
-{
-    if (context == NULL) {
-        return;
-    }
-    /* Unregister the network device */
-    unregister_netdev(virt_net_dev);
-
-    /* Free the net_device memory */
-    free_netdev(virt_net_dev);
-
-    /* free driver context */
-    wiphy_unregister(context->wiphy);
-    wiphy_free(context->wiphy);
-    kfree(context);
-    kfree(buffer);
-
-    printk(KERN_INFO "%s: Virtual network driver unloaded\n", VIRT_NET_DRIVER_NAME);
-}
+static struct context *adapter_context;
 
 static int init_virt_hw_resource(struct net_device *dev)
 {
@@ -331,5 +264,84 @@ static int virt_net_driver_cfg80211_disconnect(struct wiphy *wiphy, struct net_d
     return 0;
 }
 
+static int __init virt_net_driver_init(void)
+{
+    int ret;
+
+    /* Allocate and initialize net_device */
+    virt_net_dev = alloc_etherdev(sizeof(struct virt_net_dev_priv));
+    if (!virt_net_dev) {
+        printk(KERN_ERR "%s: Failed to allocate net_device\n", VIRT_NET_DRIVER_NAME);
+        return -ENOMEM;
+    }
+
+    /* Initialize net_device fields and operations */
+	/* Set the device's name */
+	strlcpy(virt_net_dev->name, VIRT_NET_DRIVER_NAME, sizeof(virt_net_dev->name));
+
+	/* Assign the net_device operations */
+	static const struct net_device_ops virt_net_dev_ops = {
+		.ndo_open = virt_net_driver_open,
+		.ndo_stop = virt_net_driver_stop,
+		.ndo_start_xmit = virt_net_driver_start_xmit,
+		.ndo_set_mac_address = virt_net_driver_set_mac_address,
+		.ndo_do_ioctl = virt_net_driver_do_ioctl,
+	};
+
+	virt_net_dev->netdev_ops = &virt_net_dev_ops;
+
+	/* Assign the ethtool operations */
+    // TODO: Fill in necessary fields and function pointers in virt_net_dev
+	static const struct ethtool_ops virt_net_ethtool_ops = {
+		// .get_drvinfo = virt_net_driver_get_drvinfo,
+		// .get_link = virt_net_driver_get_link,
+		// .get_link_ksettings = virt_net_driver_get_link_ksettings,
+		// .set_link_ksettings = virt_net_driver_set_link_ksettings,
+		// ... other ethtool operations
+	};
+
+	virt_net_dev->ethtool_ops = &virt_net_ethtool_ops;
+
+    /* Allocate and initialize adapter context */
+    adapter_context = kzalloc(sizeof(struct context), GFP_KERNEL);
+    if (!adapter_context) {
+        printk(KERN_ERR "%s: Failed to allocate context\n", VIRT_NET_DRIVER_NAME);
+        return -ENOMEM;
+    }
+
+    /* Initialize context fields */
+    // TODO: Fill in necessary fields for context
+
+    /* Register the network device with the kernel */
+    ret = register_netdev(virt_net_dev);
+    if (ret) {
+        printk(KERN_ERR "%s: Failed to register net_device: %d\n", VIRT_NET_DRIVER_NAME, ret);
+        free_netdev(virt_net_dev);
+        return ret;
+    }
+
+    printk(KERN_INFO "%s: Virtual network driver loaded\n", VIRT_NET_DRIVER_NAME);
+    return 0;
+}
+
+static void __exit virt_net_driver_exit(void)
+{
+    if (context == NULL) {
+        return;
+    }
+    /* Unregister the network device */
+    unregister_netdev(virt_net_dev);
+
+    /* Free the net_device memory */
+    free_netdev(virt_net_dev);
+
+    /* free driver context */
+    wiphy_unregister(context->wiphy);
+    wiphy_free(context->wiphy);
+    kfree(context);
+    kfree(buffer);
+
+    printk(KERN_INFO "%s: Virtual network driver unloaded\n", VIRT_NET_DRIVER_NAME);
+}
 module_init(virt_net_driver_init);
 module_exit(virt_net_driver_exit);
