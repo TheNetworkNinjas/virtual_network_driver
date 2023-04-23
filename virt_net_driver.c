@@ -111,13 +111,13 @@ static void virt_net_timer_callback(struct timer_list *t)
     struct virt_net_dev_priv *priv = from_timer(priv, t, timer);
     struct net_device *dev = priv->netdev;
 
-    // Increment the counter
+    /* Increment the counter */
     priv->counter++;
 
-    // Print a message
+    /* Print a message */
     printk(KERN_INFO "%s: Timer tick, counter = %lu\n", dev->name, priv->counter);
 
-    // Reschedule the timer
+    /* Reschedule the timer */
     mod_timer(&priv->timer, jiffies + msecs_to_jiffies(1000));
 }
 
@@ -132,7 +132,7 @@ static int virt_net_driver_open(struct net_device *dev)
         return ret;
     }
 
-    // Initialize a kernel timer
+    /* Initialize a kernel timer */
     timer_setup(&priv->timer, virt_net_timer_callback, 0);
     mod_timer(&priv->timer, jiffies + msecs_to_jiffies(1000));
 
@@ -154,7 +154,7 @@ static int virt_net_driver_stop(struct net_device *dev)
     /* Cleanup any resources allocated for the virtual network driver */
     release_virt_hw_resource(dev);
 
-    // Delete the kernel timer
+    /* Delete the kernel timer */
     del_timer_sync(&priv->timer);
 
     printk(KERN_INFO "%s: Virtual network device closed\n", dev->name);
