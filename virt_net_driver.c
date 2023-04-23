@@ -110,21 +110,6 @@ static int is_tx_fifo_full(struct virt_fifo *tx_fifo)
     return (kfifo_len(&tx_fifo->fifo) / sizeof(struct sk_buff *)) >= MAX_NUM_PACKETS;
 }
 
-static void virt_net_timer_callback(struct timer_list *t)
-{
-    struct virt_net_dev_priv *priv = from_timer(priv, t, timer);
-    struct net_device *dev = priv->netdev;
-
-    /* Increment the counter */
-    priv->counter++;
-
-    /* Print a message */
-    printk(KERN_INFO "%s: Timer tick, counter = %lu\n", dev->name, priv->counter);
-
-    /* Reschedule the timer */
-    mod_timer(&priv->timer, jiffies + msecs_to_jiffies(1000));
-}
-
 static int virt_net_driver_open(struct net_device *dev)
 {
     struct virt_net_dev_priv *priv = netdev_priv(dev);
@@ -229,6 +214,47 @@ static netdev_tx_t virt_net_driver_start_xmit(struct sk_buff *skb, struct net_de
     virt_net_tx_complete(dev, skb);
 
     return NETDEV_TX_OK;
+}
+
+static void virt_net_rx_packet(struct net_device *dev, struct sk_buff *skb)
+{
+    struct virt_net_dev_priv *priv = netdev_priv(dev);
+
+    /* Update the device statistics */
+    dev->stats.rx_packets++;
+    dev->stats.rx_bytes += skb->len;
+
+    /* Set the packet's protocol field */
+    skb->protocol = eth_type_trans(skb, dev);
+
+    /* Pass the packet up to the network stack */
+    netif_rx(skb);
+
+    printk(KERN_INFO "%s: Received packet, len: %u\n", dev->name, skb->len);
+}
+
+static void virt_net_timer_callback(struct timer_list *t)
+{
+    struct virt_net_dev_priv *priv = from_timer(priv, t, timer);
+    struct net_device *dev = priv->netdev;
+    struct sk_buff *skb;
+
+    /* Increment the counter */
+    priv->counter++;
+
+    /* Print a message */
+    printk(KERN_INFO "%s: Timer tick, counter = %lu\n", dev->name, priv->counter);
+
+    /* Create a dummy packet and pass it to virt_net_rx_packet */
+    skb = alloc_skb(64, GFP_ATOMIC);
+    if (skb) {
+        skb_put(skb, 64); // Set the length of the skb to 64 bytes
+        memset(skb->data, 0, 64); // Fill the skb data with zeros
+        virt_net_rx_packet(dev, skb);
+    }
+
+    /* Reschedule the timer */
+    mod_timer(&priv->timer, jiffies + msecs_to_jiffies(1000));
 }
 
 static int virt_net_driver_set_mac_address(struct net_device *dev, void *addr)
