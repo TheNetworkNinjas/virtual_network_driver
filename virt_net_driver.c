@@ -6,6 +6,7 @@
 #include <linux/init.h>
 #include <linux/netdevice.h>
 #include <linux/nl80211.h>
+#include <linux/slab.h>
 #include <linux/workqueue.h> // work struct
 #include <semaphore.h>
 #include "virt_net_driver.h"
@@ -21,6 +22,9 @@ MODULE_DESCRIPTION("Virtual network driver for Linux");
 MODULE_VERSION("0.01");
 
 typedef unsigned short u16;
+
+void *buffer;
+size_t buffer_size = 512;
 
 /* virtual driver context */
 struct virt_net_driver_context {
@@ -101,6 +105,7 @@ static void __exit virt_net_driver_exit(void)
     wiphy_unregister(context->wiphy);
     wiphy_free(context->wiphy);
     kfree(context);
+    kfree(buffer);
 
     printk(KERN_INFO "%s: Virtual network driver unloaded\n", VIRT_NET_DRIVER_NAME);
 }
