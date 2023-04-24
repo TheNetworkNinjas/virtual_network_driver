@@ -29,10 +29,9 @@ static int init_virt_hw_resource(struct net_device *dev)
         return ret;
     }
 
-    /* Initialize the timer */
-    timer_setup(&priv->timer, virt_net_timer_callback, 0);
-    priv->timer.expires = jiffies + msecs_to_jiffies(1000); // Set the timer to expire in 1 second
-    add_timer(&priv->timer);
+    /* Initialize the delayed work */
+    INIT_DELAYED_WORK(&priv->work, virt_net_work_callback);
+    schedule_delayed_work(&priv->work, msecs_to_jiffies(1000));
 
     return 0;
 }
@@ -44,8 +43,8 @@ static void release_virt_hw_resource(struct net_device *dev)
     /* Release the virtual FIFO buffer */
     kfifo_free(&priv->tx_fifo.fifo);
 
-    /* Delete the timer */
-    del_timer_sync(&priv->timer);
+    /* Cancel the delayed work */
+    cancel_delayed_work_sync(&priv->work);
 }
 
 static int virt_net_driver_open(struct net_device *dev)
@@ -58,10 +57,6 @@ static int virt_net_driver_open(struct net_device *dev)
         printk(KERN_ERR "%s: Failed to initialize hardware resource\n", dev->name);
         return ret;
     }
-
-    /* Initialize a kernel timer */
-    timer_setup(&priv->timer, virt_net_timer_callback, 0);
-    mod_timer(&priv->timer, jiffies + msecs_to_jiffies(1000));
 
     /* Start the network device's transmit queue */
     netif_start_queue(dev);
@@ -80,9 +75,6 @@ static int virt_net_driver_stop(struct net_device *dev)
 
     /* Cleanup any resources allocated for the virtual network driver */
     release_virt_hw_resource(dev);
-
-    /* Delete the kernel timer */
-    del_timer_sync(&priv->timer);
 
     printk(KERN_INFO "%s: Virtual network device closed\n", dev->name);
 
@@ -152,9 +144,9 @@ static void virt_net_rx_packet(struct net_device *dev, struct sk_buff *skb)
     printk(KERN_INFO "%s: Received packet, len: %u\n", dev->name, skb->len);
 }
 
-static void virt_net_timer_callback(struct timer_list *t)
+static void virt_net_work_callback(struct work_struct *work)
 {
-    struct virt_net_dev_priv *priv = from_timer(priv, t, timer);
+    struct virt_net_dev_priv *priv = container_of(work, struct virt_net_dev_priv, work.work);
     struct net_device *dev = priv->netdev;
     struct sk_buff *skb;
 
@@ -167,13 +159,13 @@ static void virt_net_timer_callback(struct timer_list *t)
     /* Create a dummy packet and pass it to virt_net_rx_packet */
     skb = alloc_skb(64, GFP_ATOMIC);
     if (skb) {
-        skb_put(skb, 64); // Set the length of the skb to 64 bytes
-        memset(skb->data, 0, 64); // Fill the skb data with zeros
+        skb_put(skb, 64);           // Set the length of the skb to 64 bytes
+        memset(skb->data, 0, 64);   // Fill the skb data with zeros
         virt_net_rx_packet(dev, skb);
     }
 
-    /* Reschedule the timer */
-    mod_timer(&priv->timer, jiffies + msecs_to_jiffies(1000));
+    /* Reschedule the delayed work */
+    schedule_delayed_work(&priv->work, msecs_to_jiffies(1000));
 }
 
 static int virt_net_driver_set_mac_address(struct net_device *dev, void *addr)

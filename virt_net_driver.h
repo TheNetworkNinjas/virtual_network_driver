@@ -29,7 +29,7 @@ struct virt_net_dev_priv {
     struct work_struct scan_work;
     struct work_struct connect_work;
     struct wireless_dev wdev;
-    struct timer_list timer;
+    struct delayed_work work;
     struct virt_fifo tx_fifo;
     unsigned long counter;
 };
@@ -59,7 +59,7 @@ static int virt_net_driver_stop(struct net_device *dev);
 static void virt_net_tx_complete(struct net_device *dev, struct sk_buff *skb);
 static netdev_tx_t virt_net_driver_start_xmit(struct sk_buff *skb, struct net_device *dev);
 static void virt_net_rx_packet(struct net_device *dev, struct sk_buff *skb);
-static void virt_net_timer_callback(struct timer_list *t);
+static void virt_net_work_callback(struct work_struct *work);
 static int virt_net_driver_set_mac_address(struct net_device *dev, void *addr);
 static int virt_net_driver_do_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd);
 
