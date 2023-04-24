@@ -78,11 +78,20 @@ static int init_virt_hw_resource(struct net_device *dev)
     struct virt_net_dev_priv *priv = netdev_priv(dev);
     int ret;
 
-    /* Initialize the virtual FIFO buffer */
+    /* Initialize the virtual transmit FIFO buffer */
     spin_lock_init(&priv->tx_fifo.lock);
     ret = kfifo_alloc(&priv->tx_fifo.fifo, VIRT_FIFO_SIZE, GFP_KERNEL);
     if (ret) {
-        printk(KERN_ERR "%s: Failed to allocate virtual FIFO buffer\n", dev->name);
+        printk(KERN_ERR "%s: Failed to allocate virtual transmit FIFO buffer\n", dev->name);
+        return ret;
+    }
+
+    /* Initialize the virtual receive FIFO buffer */
+    spin_lock_init(&priv->rx_fifo.lock);
+    ret = kfifo_alloc(&priv->rx_fifo.fifo, VIRT_FIFO_SIZE, GFP_KERNEL);
+    if (ret) {
+        printk(KERN_ERR "%s: Failed to allocate virtual receive FIFO buffer\n", dev->name);
+        kfifo_free(&priv->tx_fifo.fifo);
         return ret;
     }
 
@@ -98,8 +107,11 @@ static void release_virt_hw_resource(struct net_device *dev)
 {
     struct virt_net_dev_priv *priv = netdev_priv(dev);
 
-    /* Release the virtual FIFO buffer */
+    /* Release the virtual transmit FIFO buffer */
     kfifo_free(&priv->tx_fifo.fifo);
+
+    /* Release the virtual receive FIFO buffer */
+    kfifo_free(&priv->rx_fifo.fifo);
 
     /* Delete the timer */
     del_timer_sync(&priv->timer);
@@ -108,6 +120,11 @@ static void release_virt_hw_resource(struct net_device *dev)
 static int is_tx_fifo_full(struct virt_fifo *tx_fifo)
 {
     return (kfifo_len(&tx_fifo->fifo) / sizeof(struct sk_buff *)) >= MAX_NUM_PACKETS;
+}
+
+static int is_rx_fifo_empty(struct virt_fifo *rx_fifo)
+{
+    return kfifo_is_empty(&rx_fifo->fifo);
 }
 
 static int virt_net_driver_open(struct net_device *dev)
@@ -219,18 +236,30 @@ static netdev_tx_t virt_net_driver_start_xmit(struct sk_buff *skb, struct net_de
 static void virt_net_rx_packet(struct net_device *dev, struct sk_buff *skb)
 {
     struct virt_net_dev_priv *priv = netdev_priv(dev);
+    int ret;
 
-    /* Update the device statistics */
-    dev->stats.rx_packets++;
-    dev->stats.rx_bytes += skb->len;
+    /* Lock the virtual receive FIFO buffer */
+    spin_lock_bh(&priv->rx_fifo.lock);
 
-    /* Set the packet's protocol field */
-    skb->protocol = eth_type_trans(skb, dev);
+    /* Add the skb to the virtual receive FIFO buffer */
+    ret = kfifo_in(&priv->rx_fifo.fifo, &skb, sizeof(skb));
+    if (ret != sizeof(skb)) {
+        printk(KERN_ERR "%s: Failed to enqueue packet to the virtual receive FIFO buffer\n", dev->name);
 
-    /* Pass the packet up to the network stack */
-    netif_rx(skb);
+        /* Unlock the virtual receive FIFO buffer */
+        spin_unlock_bh(&priv->rx_fifo.lock);
 
-    printk(KERN_INFO "%s: Received packet, len: %u\n", dev->name, skb->len);
+        /* Update network device statistics */
+        dev->stats.rx_dropped++;
+
+        /* Free the skb */
+        dev_kfree_skb(skb);
+
+        return;
+    }
+
+    /* Unlock the virtual receive FIFO buffer */
+    spin_unlock_bh(&priv->rx_fifo.lock);
 }
 
 static void virt_net_timer_callback(struct timer_list *t)
@@ -245,11 +274,13 @@ static void virt_net_timer_callback(struct timer_list *t)
     /* Print a message */
     printk(KERN_INFO "%s: Timer tick, counter = %lu\n", dev->name, priv->counter);
 
-    /* Create a dummy packet and pass it to virt_net_rx_packet */
-    skb = alloc_skb(64, GFP_ATOMIC);
-    if (skb) {
-        skb_put(skb, 64); // Set the length of the skb to 64 bytes
-        memset(skb->data, 0, 64); // Fill the skb data with zeros
+    /* Dequeue the received packets from the receive FIFO buffer */
+    while (!is_rx_fifo_empty(&priv->rx_fifo)) {
+        spin_lock_bh(&priv->rx_fifo.lock);
+        kfifo_out(&priv->rx_fifo.fifo, &skb, sizeof(skb));
+        spin_unlock_bh(&priv->rx_fifo.lock);
+
+        /* Process the received packet */
         virt_net_rx_packet(dev, skb);
     }
 
