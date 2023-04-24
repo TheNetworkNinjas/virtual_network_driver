@@ -243,7 +243,7 @@ static void virt_net_driver_get_drvinfo(struct net_device *dev, struct ethtool_d
 {
     strlcpy(info->driver, VIRT_NET_DRIVER_NAME, sizeof(info->driver));
     strlcpy(info->version, VIRT_NET_DRIVER_VERSION, sizeof(info->version));
-    strlcpy(info->bus_info, "virtual", sizeof(info->bus_info));
+    snprintf(info->bus_info, sizeof(info->bus_info), "virtual (Vendor: 0x%04X, Device: 0x%04X)", VIRT_NET_VENDOR_ID, VIRT_NET_DEVICE_ID);
 }
 
 static uint32_t virt_net_driver_get_link(struct net_device *dev)
