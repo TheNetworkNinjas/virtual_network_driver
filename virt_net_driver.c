@@ -244,6 +244,36 @@ static int virt_net_driver_cfg80211_disconnect(struct wiphy *wiphy, struct net_d
     return 0;
 }
 
+static void virt_net_driver_get_drvinfo(struct net_device *dev, struct ethtool_drvinfo *info)
+{
+    strlcpy(info->driver, VIRT_NET_DRIVER_NAME, sizeof(info->driver));
+    strlcpy(info->version, VIRT_NET_DRIVER_VERSION, sizeof(info->version));
+    strlcpy(info->bus_info, "virtual", sizeof(info->bus_info));
+}
+
+static uint32_t virt_net_driver_get_link(struct net_device *dev)
+{
+    // Return 1 if the link is up, 0 if it's down
+    // This is a virtual driver, so we can return 1 for the link to always be up
+    return 1;
+}
+
+static int virt_net_driver_get_link_ksettings(struct net_device *dev, struct ethtool_link_ksettings *ks)
+{
+    // Get the current link settings, e.g., speed, duplex, etc.
+    // For a virtual driver, we can set default/fixed values
+    ks->base.speed = SPEED_1000;    // 1 Gbps
+    ks->base.duplex = DUPLEX_FULL;  // Full duplex
+    return 0;
+}
+
+static int virt_net_driver_set_link_ksettings(struct net_device *dev, const struct ethtool_link_ksettings *ks)
+{
+    // Set the link settings based on the provided ethtool_link_ksettings struct
+    // As this is a virtual driver, we can ignore the settings and return success
+    return 0;
+}
+
 static int __init virt_net_driver_init(void)
 {
     int ret;
@@ -278,12 +308,11 @@ static int __init virt_net_driver_init(void)
 	virt_net_dev->netdev_ops = &virt_net_dev_ops;
 
 	/* Assign the ethtool operations */
-    // TODO: Fill in necessary fields and function pointers in virt_net_dev
 	static const struct ethtool_ops virt_net_ethtool_ops = {
-		// .get_drvinfo = virt_net_driver_get_drvinfo,
-		// .get_link = virt_net_driver_get_link,
-		// .get_link_ksettings = virt_net_driver_get_link_ksettings,
-		// .set_link_ksettings = virt_net_driver_set_link_ksettings,
+		.get_drvinfo = virt_net_driver_get_drvinfo,
+		.get_link = virt_net_driver_get_link,
+		.get_link_ksettings = virt_net_driver_get_link_ksettings,
+		.set_link_ksettings = virt_net_driver_set_link_ksettings,
 		// ... other ethtool operations
 	};
 

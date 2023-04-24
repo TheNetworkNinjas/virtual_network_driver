@@ -47,6 +47,12 @@ static void __exit virt_net_driver_exit(void);
 static int init_virt_hw_resource(struct net_device *dev);
 static void release_virt_hw_resource(struct net_device *dev);
 
+/* Kernel Interaction Functions */
+static void virt_net_driver_get_drvinfo(struct net_device *dev, struct ethtool_drvinfo *info);
+static uint32_t virt_net_driver_get_link(struct net_device *dev);
+static int virt_net_driver_get_link_ksettings(struct net_device *dev, struct ethtool_link_ksettings *ks);
+static int virt_net_driver_set_link_ksettings(struct net_device *dev, const struct ethtool_link_ksettings *ks);
+
 /* Network Device Operations */
 static int virt_net_driver_open(struct net_device *dev);
 static int virt_net_driver_stop(struct net_device *dev);
