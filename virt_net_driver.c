@@ -40,11 +40,14 @@ static void release_virt_hw_resource(struct net_device *dev)
 {
     struct virt_net_dev_priv *priv = netdev_priv(dev);
 
+    /* Cancel the delayed work */
+    cancel_delayed_work(&priv->work);
+
+    /* Ensure the work function has completed */
+    flush_delayed_work(&priv->work);
+
     /* Release the virtual FIFO buffer */
     kfifo_free(&priv->tx_fifo.fifo);
-
-    /* Cancel the delayed work */
-    cancel_delayed_work_sync(&priv->work);
 }
 
 static int virt_net_driver_open(struct net_device *dev)
