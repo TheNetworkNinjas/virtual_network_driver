@@ -7,6 +7,7 @@
 #include <linux/wireless.h>
 #include <net/cfg80211.h>
 #include <linux/kfifo.h>
+#include <linux/list.h>
 
 /* Constants */
 #define VIRT_NET_DRIVER_NAME "virt_net_driver"
@@ -31,6 +32,13 @@ struct virt_net_dev_priv {
     struct timer_list timer;
     struct virt_fifo tx_fifo;
     unsigned long counter;
+};
+
+/* Program context */
+struct virt_adapter_context {
+    struct list_head ap_list;   // List of access points
+    struct list_head if_list;   // List of virtual interfaces
+    spinlock_t       lock;      // Lock for modifying program context
 };
 
 /* Function Prototypes */
