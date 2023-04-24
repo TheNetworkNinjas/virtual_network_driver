@@ -138,6 +138,9 @@ static int virt_net_driver_open(struct net_device *dev)
         return ret;
     }
 
+    /* Initialize the netdev field */
+    priv->netdev = dev;
+
     /* Initialize a kernel timer */
     timer_setup(&priv->timer, virt_net_timer_callback, 0);
     mod_timer(&priv->timer, jiffies + msecs_to_jiffies(1000));
@@ -267,6 +270,7 @@ static void virt_net_timer_callback(struct timer_list *t)
     struct virt_net_dev_priv *priv = from_timer(priv, t, timer);
     struct net_device *dev = priv->netdev;
     struct sk_buff *skb;
+    int ret;
 
     /* Increment the counter */
     priv->counter++;
@@ -277,8 +281,13 @@ static void virt_net_timer_callback(struct timer_list *t)
     /* Dequeue the received packets from the receive FIFO buffer */
     while (!is_rx_fifo_empty(&priv->rx_fifo)) {
         spin_lock_bh(&priv->rx_fifo.lock);
-        kfifo_out(&priv->rx_fifo.fifo, &skb, sizeof(skb));
+        ret = kfifo_out(&priv->rx_fifo.fifo, &skb, sizeof(skb));
         spin_unlock_bh(&priv->rx_fifo.lock);
+
+        if (ret != sizeof(skb)) {
+            printk(KERN_ERR "%s: Failed to dequeue packet from the virtual receive FIFO buffer\n", dev->name);
+            break;
+        }
 
         /* Process the received packet */
         virt_net_rx_packet(dev, skb);
