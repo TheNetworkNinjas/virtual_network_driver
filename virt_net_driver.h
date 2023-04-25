@@ -42,6 +42,7 @@ struct virt_net_dev_priv {
     unsigned long counter;
     struct list_head bss_list;
     struct list_head if_node;
+    struct mutex mtx;
 };
 
 /* Program context */
@@ -49,7 +50,6 @@ struct virt_adapter_context {
     struct mutex mtx;
     struct list_head ap_list;   // List of access points
     struct list_head if_list;   // List of virtual interfaces
-    spinlock_t       lock;      // Lock for modifying program context
 };
 
 /* Function Prototypes */
@@ -82,6 +82,7 @@ static int virt_net_driver_cfg80211_connect(struct wiphy *wiphy, struct net_devi
 static int virt_net_driver_cfg80211_disconnect(struct wiphy *wiphy, struct net_device *dev, u16 reason_code);
 
 /* Interface Configuration Operatins */
-static int add_virt_intf(int identifier);
+static int add_virt_if(int identifier);
+static int delete_virt_if(struct virt_net_dev_priv* priv);
 
 #endif /* _VIRT_NET_DRIVER_H_ */

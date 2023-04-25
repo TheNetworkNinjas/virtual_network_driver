@@ -21,7 +21,7 @@ static int init_virt_hw_resource(struct net_device *dev)
 {
     struct virt_net_dev_priv *priv = netdev_priv(dev);
     int ret;
-
+    
     /* Initialize the virtual transmit FIFO buffer */
     spin_lock_init(&priv->tx_fifo.lock);
     ret = kfifo_alloc(&priv->tx_fifo.fifo, VIRT_FIFO_SIZE, GFP_KERNEL);
@@ -54,6 +54,7 @@ static void release_virt_hw_resource(struct net_device *dev)
 
     /* Release the virtual FIFO buffer */
     kfifo_free(&priv->tx_fifo.fifo);
+    kfifo_free(&priv->rx_fifo.fifo);
 }
 
 static int is_tx_fifo_full(struct virt_fifo *tx_fifo)
@@ -364,7 +365,7 @@ static const struct ethtool_ops virt_net_ethtool_ops = {
     // ... other ethtool operations
 };
 
-static int add_virt_intf(int identifier)
+static int add_virt_if(int identifier)
 {
     int error;
 
@@ -375,7 +376,8 @@ static int add_virt_intf(int identifier)
 
     // allocating new device
     // virt_net_dev = alloc_netdev(sizeof(struct virt_net_dev_priv), NET_DEV_NAME, NET_NAME_ENUM, ether_setup);
-    virt_net_dev = alloc_etherdev(sizeof(struct virt_net_dev_priv));
+    // virt_net_dev = alloc_etherdev(sizeof(struct virt_net_dev_priv));
+    virt_net_dev = alloc_netdev(sizeof(struct virt_net_dev_priv), NET_DEV_NAME, NET_NAME_ENUM, ether_setup);
     if (!virt_net_dev) {
         printk(KERN_ERR "%s: Failed to allocate net_device\n", VIRT_NET_DRIVER_NAME);
         // free wiphy?
@@ -417,6 +419,12 @@ static int add_virt_intf(int identifier)
         return -ENOMEM;
     }
 
+    /* init mutex */
+    mutex_init(&priv->mtx);
+
+    /* init buffers */
+    init_virt_hw_resource(priv->netdev);
+
     /* init connection info */ 
     /* init timers */
 
@@ -425,8 +433,32 @@ static int add_virt_intf(int identifier)
     list_add_tail(&priv->if_node, &context->if_list);
     mutex_unlock(&context->mtx);
 
+    // virt_net_driver_open(priv->netdev);
+
     return 0;
 }
+
+static int delete_virt_if(struct virt_net_dev_priv* priv)
+{
+    mutex_lock(&priv->mtx);
+    // stop transfer queues and queued work
+    netif_stop_queue(priv->netdev);
+
+    // stop pending scans
+    // TODO: after scan is implemented
+
+    mutex_unlock(&priv->mtx);
+
+    // unregister device
+     unregister_netdev(priv->netdev);
+
+    // free device
+    free_netdev(priv->netdev);
+
+    // free wiphy device
+    return 0;
+}
+
 
 static int __init virt_net_driver_init(void)
 {
@@ -453,7 +485,7 @@ static int __init virt_net_driver_init(void)
     printk(KERN_INFO "%s: Creating interfaces\n", VIRT_NET_DRIVER_NAME);
     for (int i = 0; i < MAX_IF_NUM; i++)
     {
-        add_virt_intf(i);
+        add_virt_if(i);
     }
     printk(KERN_INFO "%s: Interfaces created\n", VIRT_NET_DRIVER_NAME);
 
@@ -465,17 +497,20 @@ static int __init virt_net_driver_init(void)
 static void __exit virt_net_driver_exit(void)
 {
     /* Unregister the network device */
-    unregister_netdev(virt_net_dev);
+    // unregister_netdev(virt_net_dev);
 
     /* Free the net_device memory */
-    free_netdev(virt_net_dev);
+    // free_netdev(virt_net_dev);
 
     /* Free each virtual interface */ 
-    // struct virt_net_dev_priv *priv = NULL, *safe = NULL;
-    // list_for_each_entry_safe(priv, safe, &context->if_list, if_node);
+    struct virt_net_dev_priv *priv = NULL, *tmp = NULL;
+    list_for_each_entry_safe(priv, tmp, &context->if_list, if_node)
+    {
+        delete_virt_if(priv);
+    }
 
     /* Free context */
-    kfree(context);
+     kfree(context);
 
 
     printk(KERN_INFO "%s: Virtual network driver unloaded\n", VIRT_NET_DRIVER_NAME);
