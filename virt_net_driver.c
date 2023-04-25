@@ -287,10 +287,45 @@ static int virt_net_driver_do_ioctl(struct net_device *dev, struct ifreq *ifr, i
 
 static int virt_net_driver_cfg80211_scan(struct wiphy *wiphy, struct cfg80211_scan_request *request)
 {
-    // TODO: Perform a Wi-Fi scan using the virtual network driver and report the scan results
-    // using cfg80211_scan_done()
+    int i;
 
     printk(KERN_INFO "Virtual Wi-Fi scan initiated\n");
+
+    /* Simulate a Wi-Fi scan with some fake access points */
+    for (i = 0; i < request->n_ssids; i++) {
+        struct cfg80211_bss *bss;
+        struct ieee80211_channel *channel;
+        uint8_t bssid[ETH_ALEN] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55};
+        uint32_t signal = -30;  // dBm
+        struct ieee80211_mgmt mgmt = {};
+
+        /* Use the first channel from the request for the fake access point */
+        channel = request->channels[0];
+
+        /* Set the BSSID for the fake BSS */
+        memcpy(mgmt.bssid, bssid, ETH_ALEN);
+
+        /* Set the frame control field to indicate a beacon frame */
+        mgmt.frame_control = cpu_to_le16(IEEE80211_FTYPE_MGMT | IEEE80211_STYPE_BEACON);
+
+        /* Set the timestamp field for the fake BSS */
+        mgmt.u.beacon.timestamp = cpu_to_le64(ktime_get_real_ns());
+
+        /* Create a fake BSS */
+        bss = cfg80211_inform_bss_frame(wiphy, channel, &mgmt, sizeof(mgmt), signal, GFP_KERNEL);
+        if (!bss) {
+            printk(KERN_ERR "Failed to create a fake BSS\n");
+            continue;
+        }
+
+        /* Notify the cfg80211 subsystem about the new BSS */
+        cfg80211_put_bss(wiphy, bss);
+    }
+
+    /* Notify the cfg80211 subsystem that the scan is complete */
+    cfg80211_scan_done(request, false);
+
+    printk(KERN_INFO "Virtual Wi-Fi scan complete\n");
 
     return 0;
 }
@@ -305,7 +340,7 @@ static int virt_net_driver_cfg80211_connect(struct wiphy *wiphy, struct net_devi
     return 0;
 }
 
-static int virt_net_driver_cfg80211_disconnect(struct wiphy *wiphy, struct net_device *dev, u16 reason_code)
+static int virt_net_driver_cfg80211_disconnect(struct wiphy *wiphy, struct net_device *dev, uint16_t reason_code)
 {
     // TODO: Perform a Wi-Fi disconnection using the virtual network driver and report the disconnection
     // status using cfg80211_disconnected()
@@ -333,7 +368,7 @@ static int virt_net_driver_get_link_ksettings(struct net_device *dev, struct eth
 {
     // Get the current link settings, e.g., speed, duplex, etc.
     // For a virtual driver, we can set default/fixed values
-    ks->base.speed = SPEED_1000;    // 1 Gbps
+    ks->base.speed = SPEED_2500;    // 2.5 Gbps
     ks->base.duplex = DUPLEX_FULL;  // Full duplex
     return 0;
 }
