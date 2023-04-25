@@ -496,11 +496,6 @@ static int __init virt_net_driver_init(void)
 
 static void __exit virt_net_driver_exit(void)
 {
-    /* Unregister the network device */
-    // unregister_netdev(virt_net_dev);
-
-    /* Free the net_device memory */
-    // free_netdev(virt_net_dev);
 
     /* Free each virtual interface */ 
     struct virt_net_dev_priv *priv = NULL, *tmp = NULL;
