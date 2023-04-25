@@ -35,6 +35,8 @@ struct virt_net_dev_priv {
     struct delayed_work work;
     struct virt_fifo tx_fifo;
     struct virt_fifo rx_fifo;
+    int connected;
+    u8 *ssid;
     unsigned long counter;
 };
 

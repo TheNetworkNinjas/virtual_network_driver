@@ -300,6 +300,29 @@ static int virt_net_driver_cfg80211_connect(struct wiphy *wiphy, struct net_devi
     // TODO: Perform a Wi-Fi connection using the virtual network driver and report the connection
     // status using cfg80211_connect_result()
 
+    /* ptr to virt network device's private data structure */
+    struct virt_net_dev_priv * priv = netdev_priv(dev);
+
+    /* check if the virtual network device is already connected */
+    if(priv->connected) {
+        printk(KERN_ERR "%s: Virtual network device is already connected\n", dev->name);
+    }
+
+    /* Check if the requested SSID matches the virtual network device's SSID */
+    if(strncmp(params->ssid, priv->ssid, ETH_ALEN != 0)) {
+        printk(KERN_ERR "%s: Requested SSID does not match the virtual network device's SSSID\n", dev->name);
+        return -EINVAL;
+    }
+
+    /* Check if requested channel matches virtual network device's channel */
+    if (params->channel->hw_value != priv->channel) {
+        printk(KERN_ERR, "%s: Requested channel does not match virtual network device's channel\n", dev->name);
+        return -EINVAL;
+    }
+
+    /* Set virtual network device's BSSID to AP's MAC address */
+    memcpy(priv->bssid, params->bssid, ETH_ALEN);
+
     printk(KERN_INFO "Virtual Wi-Fi connect initiated\n");
 
     return 0;
