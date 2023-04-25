@@ -290,6 +290,31 @@ static int virt_net_driver_cfg80211_scan(struct wiphy *wiphy, struct cfg80211_sc
     // TODO: Perform a Wi-Fi scan using the virtual network driver and report the scan results
     // using cfg80211_scan_done()
 
+    /* ptr to wiphy device's private data structure */
+    struct vnet_device * dev = netdev_priv(wiphy);
+
+    /* ptr to virt network device's private data structure */
+    struct virt_net_dev_priv * priv = netdev_priv(dev);
+    struct cfg80211_scan_info scan_info = {};
+
+    /* Update scan parameters */
+    memcpy(&priv->scan_request->ssids, &request->ssids, sizeof(request->ssids));
+    priv->scan_request->n_ssids = request->n_ssids;
+
+    /* Initiate scan */
+    printk(KERN_INFO "%s: Initiating scan\n", dev->name);
+    schedule_work(&priv->scan_work);
+
+    /* Report scan results with cfg80211_scan_done */
+    if (scan_info != NULL) {
+        scan_info.aborted = false;
+        cfg80211_scan_done(priv->scan_request, &scan_info);
+    } else {
+        scan_info.aborted = true;
+        cfg80211_scan_done(request, &scan_info);
+        return -EAGAIN;
+    }
+
     printk(KERN_INFO "Virtual Wi-Fi scan initiated\n");
 
     return 0;
@@ -325,6 +350,9 @@ static int virt_net_driver_cfg80211_connect(struct wiphy *wiphy, struct net_devi
 
     printk(KERN_INFO "Virtual Wi-Fi connect initiated\n");
 
+    /* Report the connection status using cfg80211_connect_result() */
+    cfg80211_connect_result(dev, params->bssid, params->ie, params->ie_len, WLAN_STATUS_SUCCESS);
+
     return 0;
 }
 
@@ -332,6 +360,20 @@ static int virt_net_driver_cfg80211_disconnect(struct wiphy *wiphy, struct net_d
 {
     // TODO: Perform a Wi-Fi disconnection using the virtual network driver and report the disconnection
     // status using cfg80211_disconnected()
+
+    /* ptr to virt network device's private data structure */
+    struct virt_net_dev_priv * priv = netdev_priv(dev);
+
+    /* check if the virtual network device is already connected */
+    if(!priv->connected) {
+        printk(KERN_ERR "%s: Virtual network device is not connected\n", dev->name);
+    }
+
+    // TODO: Perform Wi-Fi disconnection using the virtual network driver
+
+    priv->connected = false;
+
+    cfg80211_disconnected(priv->wdev.netdev, reson_code, NULL, 0, true, GFP_KERNEL);
 
     printk(KERN_INFO "Virtual Wi-Fi disconnect initiated\n");
 
