@@ -3,6 +3,7 @@
 #include <linux/init.h>
 #include <linux/kfifo.h>
 #include <linux/list.h>
+#include <linux/mutex.h>
 #include "virt_net_driver.h"
 
 MODULE_LICENSE("GPL");
@@ -345,6 +346,82 @@ static int virt_net_driver_set_link_ksettings(struct net_device *dev, const stru
     return 0;
 }
 
+/* Assign the net_device operations */
+static const struct net_device_ops virt_net_dev_ops = {
+    .ndo_open = virt_net_driver_open,
+    .ndo_stop = virt_net_driver_stop,
+    .ndo_start_xmit = virt_net_driver_start_xmit,
+    .ndo_set_mac_address = virt_net_driver_set_mac_address,
+    .ndo_do_ioctl = virt_net_driver_do_ioctl,
+};
+
+static const struct ethtool_ops virt_net_ethtool_ops = {
+/* Assign the ethtool operations */
+    .get_drvinfo = virt_net_driver_get_drvinfo,
+    .get_link = virt_net_driver_get_link,
+    .get_link_ksettings = virt_net_driver_get_link_ksettings,
+    .set_link_ksettings = virt_net_driver_set_link_ksettings,
+    // ... other ethtool operations
+};
+
+static int add_virt_intf(struct wiphy *wiphy, int identifier)
+{
+    int error;
+
+    // new net device
+    struct net_device* virt_net_dev = NULL;
+    // private values of new net device
+    struct virt_net_dev_priv *priv = NULL;
+
+    // allocating new device
+    virt_net_dev = alloc_netdev(sizeof(struct virt_net_dev_priv), NET_DEV_NAME, NET_NAME_ENUM, ether_setup);
+    if (!virt_net_dev) {
+        printk(KERN_ERR "%s: Failed to allocate net_device\n", VIRT_NET_DRIVER_NAME);
+        // free wiphy?
+        return -ENOMEM;
+    }
+
+    // getting priv values
+    priv = netdev_priv(virt_net_dev);
+
+    // setting private values
+    priv->netdev = virt_net_dev;
+
+    /* Wireless_dev values */
+    priv->wdev.wiphy = wiphy;
+    // STA by default
+    priv->wdev.iftype = NL80211_IFTYPE_STATION;
+    priv->netdev->ieee80211_ptr = &priv->wdev;
+
+    priv->netdev->features |= NETIF_F_HW_CSUM;
+
+	/* Set the device's name */
+    char name[ETH_ALEN];
+    snprintf(name, ETH_ALEN, "%s%d", VIRT_NET_INTF_NAME, identifier);
+    strlcpy(virt_net_dev->name, name, sizeof(virt_net_dev->name));
+
+
+    /* assign ops */
+	virt_net_dev->netdev_ops = &virt_net_dev_ops;
+	virt_net_dev->ethtool_ops = &virt_net_ethtool_ops;
+
+    /* regsiter device */ 
+    error = register_netdev(priv->netdev);
+    if (error) {
+        printk(KERN_ERR "%s: Failed to register net_device\n", VIRT_NET_DRIVER_NAME);
+        free_netdev(priv->netdev);
+        return -ENOMEM;
+    }
+
+    /* init connection info */ 
+    /* init timers */
+
+    /* add to interface list */
+
+    
+    return 0;
+}
+
 static int __init virt_net_driver_init(void)
 {
     int ret;
@@ -357,45 +434,12 @@ static int __init virt_net_driver_init(void)
       return -ENOMEM;
     }
 
-    /* Allocate and initialize net_device */
-    virt_net_dev = alloc_etherdev(sizeof(struct virt_net_dev_priv));
-    if (!virt_net_dev) {
-        printk(KERN_ERR "%s: Failed to allocate net_device\n", VIRT_NET_DRIVER_NAME);
-        return -ENOMEM;
-    }
+    /* init global lists */
+    mutex_init(&context->mtx);
+    INIT_LIST_HEAD(&context->ap_list);
+    INIT_LIST_HEAD(&context->if_list);
 
-    /* Initialize net_device fields and operations */
-	/* Set the device's name */
-	strlcpy(virt_net_dev->name, VIRT_NET_DRIVER_NAME, sizeof(virt_net_dev->name));
-	/* Assign the net_device operations */
-	static const struct net_device_ops virt_net_dev_ops = {
-		.ndo_open = virt_net_driver_open,
-		.ndo_stop = virt_net_driver_stop,
-		.ndo_start_xmit = virt_net_driver_start_xmit,
-		.ndo_set_mac_address = virt_net_driver_set_mac_address,
-		.ndo_do_ioctl = virt_net_driver_do_ioctl,
-	};
 
-	virt_net_dev->netdev_ops = &virt_net_dev_ops;
-
-	/* Assign the ethtool operations */
-	static const struct ethtool_ops virt_net_ethtool_ops = {
-		.get_drvinfo = virt_net_driver_get_drvinfo,
-		.get_link = virt_net_driver_get_link,
-		.get_link_ksettings = virt_net_driver_get_link_ksettings,
-		.set_link_ksettings = virt_net_driver_set_link_ksettings,
-		// ... other ethtool operations
-	};
-
-	virt_net_dev->ethtool_ops = &virt_net_ethtool_ops;
-
-    /* Register the network device with the kernel */
-    ret = register_netdev(virt_net_dev);
-    if (ret) {
-        printk(KERN_ERR "%s: Failed to register net_device: %d\n", VIRT_NET_DRIVER_NAME, ret);
-        free_netdev(virt_net_dev);
-        return ret;
-    }
 
     printk(KERN_INFO "%s: Virtual network driver loaded\n", VIRT_NET_DRIVER_NAME);
     return 0;
