@@ -18,9 +18,9 @@
 #define VIRT_NET_DRIVER_MTU 1500
 #define VIRT_NET_VENDOR_ID 0x10ec   // Realtek Semiconductor Corp.
 #define VIRT_NET_DEVICE_ID 0x8125   // RTL8125 2.5GbE Controller
-#define VIRT_NET_INTF_NAME "virt_interface"
+#define VIRT_NET_INTF_NAME "vif"
 #define NET_DEV_NAME VIRT_NET_INTF_NAME "%d"
-#define MAX_INTF_NUM 3
+#define MAX_IF_NUM 3
 
 /* Virtual FIFO buffer for packet transmission */
 struct virt_fifo {
@@ -40,6 +40,8 @@ struct virt_net_dev_priv {
     struct virt_fifo tx_fifo;
     struct virt_fifo rx_fifo;
     unsigned long counter;
+    struct list_head bss_list;
+    struct list_head if_node;
 };
 
 /* Program context */
@@ -80,6 +82,6 @@ static int virt_net_driver_cfg80211_connect(struct wiphy *wiphy, struct net_devi
 static int virt_net_driver_cfg80211_disconnect(struct wiphy *wiphy, struct net_device *dev, u16 reason_code);
 
 /* Interface Configuration Operatins */
-static int add_virt_intf(struct wiphy *wiphy);
+static int add_virt_intf(int identifier);
 
 #endif /* _VIRT_NET_DRIVER_H_ */

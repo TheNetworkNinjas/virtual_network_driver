@@ -364,7 +364,7 @@ static const struct ethtool_ops virt_net_ethtool_ops = {
     // ... other ethtool operations
 };
 
-static int add_virt_intf(struct wiphy *wiphy, int identifier)
+static int add_virt_intf(int identifier)
 {
     int error;
 
@@ -374,11 +374,15 @@ static int add_virt_intf(struct wiphy *wiphy, int identifier)
     struct virt_net_dev_priv *priv = NULL;
 
     // allocating new device
-    virt_net_dev = alloc_netdev(sizeof(struct virt_net_dev_priv), NET_DEV_NAME, NET_NAME_ENUM, ether_setup);
+    // virt_net_dev = alloc_netdev(sizeof(struct virt_net_dev_priv), NET_DEV_NAME, NET_NAME_ENUM, ether_setup);
+    virt_net_dev = alloc_etherdev(sizeof(struct virt_net_dev_priv));
     if (!virt_net_dev) {
         printk(KERN_ERR "%s: Failed to allocate net_device\n", VIRT_NET_DRIVER_NAME);
         // free wiphy?
         return -ENOMEM;
+    }
+    else {
+        printk(KERN_INFO "%s: private virtual net_device allocated\n", VIRT_NET_DRIVER_NAME);
     }
 
     // getting priv values
@@ -388,18 +392,18 @@ static int add_virt_intf(struct wiphy *wiphy, int identifier)
     priv->netdev = virt_net_dev;
 
     /* Wireless_dev values */
-    priv->wdev.wiphy = wiphy;
+    //priv->wdev.wiphy = wiphy;
     // STA by default
-    priv->wdev.iftype = NL80211_IFTYPE_STATION;
-    priv->netdev->ieee80211_ptr = &priv->wdev;
-
-    priv->netdev->features |= NETIF_F_HW_CSUM;
+    // priv->wdev.iftype = NL80211_IFTYPE_STATION;
+    // priv->netdev->ieee80211_ptr = &priv->wdev;
+    //
+    // priv->netdev->features |= NETIF_F_HW_CSUM;
 
 	/* Set the device's name */
     char name[ETH_ALEN];
     snprintf(name, ETH_ALEN, "%s%d", VIRT_NET_INTF_NAME, identifier);
     strlcpy(virt_net_dev->name, name, sizeof(virt_net_dev->name));
-
+    memcpy((void*) priv->netdev->dev_addr, name, ETH_ALEN);
 
     /* assign ops */
 	virt_net_dev->netdev_ops = &virt_net_dev_ops;
@@ -417,28 +421,41 @@ static int add_virt_intf(struct wiphy *wiphy, int identifier)
     /* init timers */
 
     /* add to interface list */
+    mutex_lock(&context->mtx);
+    list_add_tail(&priv->if_node, &context->if_list);
+    mutex_unlock(&context->mtx);
 
-    
     return 0;
 }
 
 static int __init virt_net_driver_init(void)
 {
+    printk(KERN_INFO "%s: Attempting to load virtual network driver...\n", VIRT_NET_DRIVER_NAME);
     int ret;
 
     /* Allocate and initialize adapter context */ 
-	printk(KERN_INFO "%d\n", sizeof(context));
     context = kmalloc(sizeof(struct virt_adapter_context), GFP_KERNEL);
     if(!context) {
       printk(KERN_ERR "%s: Failed to allocate adapter_context\n", VIRT_NET_DRIVER_NAME);
       return -ENOMEM;
     }
+    else {
+        printk(KERN_INFO "%s: Adapter_context allocated\n", VIRT_NET_DRIVER_NAME);
+    }
 
+    printk(KERN_INFO "%s: Initializing context mutex and lists\n", VIRT_NET_DRIVER_NAME);
     /* init global lists */
     mutex_init(&context->mtx);
     INIT_LIST_HEAD(&context->ap_list);
     INIT_LIST_HEAD(&context->if_list);
+    printk(KERN_INFO "%s: Context mutex and lists initialized\n", VIRT_NET_DRIVER_NAME);
 
+    printk(KERN_INFO "%s: Creating interfaces\n", VIRT_NET_DRIVER_NAME);
+    for (int i = 0; i < MAX_IF_NUM; i++)
+    {
+        add_virt_intf(i);
+    }
+    printk(KERN_INFO "%s: Interfaces created\n", VIRT_NET_DRIVER_NAME);
 
 
     printk(KERN_INFO "%s: Virtual network driver loaded\n", VIRT_NET_DRIVER_NAME);
@@ -452,6 +469,14 @@ static void __exit virt_net_driver_exit(void)
 
     /* Free the net_device memory */
     free_netdev(virt_net_dev);
+
+    /* Free each virtual interface */ 
+    // struct virt_net_dev_priv *priv = NULL, *safe = NULL;
+    // list_for_each_entry_safe(priv, safe, &context->if_list, if_node);
+
+    /* Free context */
+    kfree(context);
+
 
     printk(KERN_INFO "%s: Virtual network driver unloaded\n", VIRT_NET_DRIVER_NAME);
 }
