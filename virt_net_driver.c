@@ -38,10 +38,6 @@ static int init_virt_hw_resource(struct net_device *dev)
         return ret;
     }
 
-    /* Initialize the delayed work */
-    INIT_DELAYED_WORK(&priv->work, virt_net_work_callback);
-    schedule_delayed_work(&priv->work, msecs_to_jiffies(1000));
-
     return 0;
 }
 

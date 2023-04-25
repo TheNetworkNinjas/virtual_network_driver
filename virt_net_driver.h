@@ -15,8 +15,8 @@
 #define MAX_NUM_PACKETS 128
 #define VIRT_FIFO_SIZE 4096
 #define VIRT_NET_DRIVER_MTU 1500
-#define VIRT_NET_VENDOR_ID 0x10ec   // Realtek Semiconductor Corp.
-#define VIRT_NET_DEVICE_ID 0x8125   // RTL8125 2.5GbE Controller
+#define VIRT_NET_VENDOR_ID 0x1111// 0x10ec   // Realtek Semiconductor Corp.
+#define VIRT_NET_DEVICE_ID 0xABCD// 0x8125   // RTL8125 2.5GbE Controller
 
 /* Virtual FIFO buffer for packet transmission */
 struct virt_fifo {
