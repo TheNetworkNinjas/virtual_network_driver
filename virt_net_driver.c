@@ -212,9 +212,6 @@ static void virt_net_work_callback(struct work_struct *work)
     /* Increment the counter */
     priv->counter++;
 
-    /* Print a message */
-    printk(KERN_INFO "%s: Timer tick, counter = %lu\n", dev->name, priv->counter);
-
     /* Dequeue the received packets from the receive FIFO buffer */
     while (!is_rx_fifo_empty(&priv->rx_fifo)) {
         spin_lock_bh(&priv->rx_fifo.lock);
