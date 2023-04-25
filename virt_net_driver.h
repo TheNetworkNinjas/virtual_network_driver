@@ -12,7 +12,6 @@
 /* Constants */
 #define VIRT_NET_DRIVER_NAME "virt_net_driver"
 #define VIRT_NET_DRIVER_VERSION "0.01"
-#define MAX_NUM_PACKETS 128
 #define VIRT_FIFO_SIZE 4096
 #define VIRT_NET_DRIVER_MTU 1500
 
@@ -32,7 +31,6 @@ struct virt_net_dev_priv {
     struct wireless_dev wdev;
     struct timer_list timer;
     struct virt_fifo tx_fifo;
-    struct virt_fifo rx_fifo;
     unsigned long counter;
 };
 
@@ -48,8 +46,6 @@ static int __init virt_net_driver_init(void);
 static void __exit virt_net_driver_exit(void);
 static int init_virt_hw_resource(struct net_device *dev);
 static void release_virt_hw_resource(struct net_device *dev);
-static int is_tx_fifo_full(struct virt_fifo *tx_fifo);
-static int is_rx_fifo_empty(struct virt_fifo *rx_fifo);
 
 /* Network Device Operations */
 static int virt_net_driver_open(struct net_device *dev);
