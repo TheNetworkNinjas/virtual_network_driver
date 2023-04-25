@@ -128,9 +128,9 @@ static netdev_tx_t virt_net_driver_start_xmit(struct sk_buff *skb, struct net_de
     /* Lock the virtual FIFO buffer */
     spin_lock_bh(&priv->tx_fifo.lock);
 
-    /* Check if the buffer is full */
-    if (is_tx_fifo_full(&priv->tx_fifo)) {
-        printk(KERN_ERR "%s: The virtual FIFO buffer is full\n", dev->name);
+    /* Check if there is enough space in the buffer */
+    if (kfifo_avail(&priv->tx_fifo.fifo) < sizeof(skb)) {
+        printk(KERN_ERR "%s: Not enough space in the virtual transmit FIFO buffer\n", dev->name);
 
         /* Unlock the virtual FIFO buffer */
         spin_unlock_bh(&priv->tx_fifo.lock);
@@ -180,6 +180,22 @@ static void virt_net_rx_packet(struct net_device *dev, struct sk_buff *skb)
 
     /* Lock the virtual receive FIFO buffer */
     spin_lock_bh(&priv->rx_fifo.lock);
+
+    /* Check if there is enough space in the buffer */
+    if (kfifo_avail(&priv->rx_fifo.fifo) < sizeof(skb)) {
+        printk(KERN_ERR "%s: Not enough space in the virtual receive FIFO buffer\n", dev->name);
+
+        /* Unlock the virtual receive FIFO buffer */
+        spin_unlock_bh(&priv->rx_fifo.lock);
+
+        /* Update network device statistics */
+        dev->stats.rx_dropped++;
+
+        /* Free the skb */
+        dev_kfree_skb(skb);
+
+        return;
+    }
 
     /* Add the skb to the virtual receive FIFO buffer */
     ret = kfifo_in(&priv->rx_fifo.fifo, &skb, sizeof(skb));
