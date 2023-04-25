@@ -38,11 +38,6 @@ static int init_virt_hw_resource(struct net_device *dev)
         return ret;
     }
 
-    /* Initialize the timer */
-    timer_setup(&priv->timer, virt_net_timer_callback, 0);
-    priv->timer.expires = jiffies + msecs_to_jiffies(1000); // Set the timer to expire in 1 second
-    add_timer(&priv->timer);
-
     return 0;
 }
 
@@ -50,14 +45,14 @@ static void release_virt_hw_resource(struct net_device *dev)
 {
     struct virt_net_dev_priv *priv = netdev_priv(dev);
 
-    /* Release the virtual transmit FIFO buffer */
+    /* Cancel the delayed work */
+    cancel_delayed_work(&priv->work);
+
+    /* Ensure the work function has completed */
+    flush_delayed_work(&priv->work);
+
+    /* Release the virtual FIFO buffer */
     kfifo_free(&priv->tx_fifo.fifo);
-
-    /* Release the virtual receive FIFO buffer */
-    kfifo_free(&priv->rx_fifo.fifo);
-
-    /* Delete the timer */
-    del_timer_sync(&priv->timer);
 }
 
 static int is_tx_fifo_full(struct virt_fifo *tx_fifo)
@@ -84,9 +79,11 @@ static int virt_net_driver_open(struct net_device *dev)
     /* Initialize the netdev field */
     priv->netdev = dev;
 
-    /* Initialize a kernel timer */
-    timer_setup(&priv->timer, virt_net_timer_callback, 0);
-    mod_timer(&priv->timer, jiffies + msecs_to_jiffies(1000));
+    /* Initialize delayed work */
+    INIT_DELAYED_WORK(&priv->work, virt_net_work_callback);
+
+    /* Schedule the delayed work */
+    schedule_delayed_work(&priv->work, msecs_to_jiffies(1000));
 
     /* Start the network device's transmit queue */
     netif_start_queue(dev);
@@ -105,9 +102,6 @@ static int virt_net_driver_stop(struct net_device *dev)
 
     /* Cleanup any resources allocated for the virtual network driver */
     release_virt_hw_resource(dev);
-
-    /* Delete the kernel timer */
-    del_timer_sync(&priv->timer);
 
     printk(KERN_INFO "%s: Virtual network device closed\n", dev->name);
 
@@ -134,9 +128,9 @@ static netdev_tx_t virt_net_driver_start_xmit(struct sk_buff *skb, struct net_de
     /* Lock the virtual FIFO buffer */
     spin_lock_bh(&priv->tx_fifo.lock);
 
-    /* Check if the buffer is full */
-    if (is_tx_fifo_full(&priv->tx_fifo)) {
-        printk(KERN_ERR "%s: The virtual FIFO buffer is full\n", dev->name);
+    /* Check if there is enough space in the buffer */
+    if (kfifo_avail(&priv->tx_fifo.fifo) < sizeof(skb)) {
+        printk(KERN_ERR "%s: Not enough space in the virtual transmit FIFO buffer\n", dev->name);
 
         /* Unlock the virtual FIFO buffer */
         spin_unlock_bh(&priv->tx_fifo.lock);
@@ -187,6 +181,22 @@ static void virt_net_rx_packet(struct net_device *dev, struct sk_buff *skb)
     /* Lock the virtual receive FIFO buffer */
     spin_lock_bh(&priv->rx_fifo.lock);
 
+    /* Check if there is enough space in the buffer */
+    if (kfifo_avail(&priv->rx_fifo.fifo) < sizeof(skb)) {
+        printk(KERN_ERR "%s: Not enough space in the virtual receive FIFO buffer\n", dev->name);
+
+        /* Unlock the virtual receive FIFO buffer */
+        spin_unlock_bh(&priv->rx_fifo.lock);
+
+        /* Update network device statistics */
+        dev->stats.rx_dropped++;
+
+        /* Free the skb */
+        dev_kfree_skb(skb);
+
+        return;
+    }
+
     /* Add the skb to the virtual receive FIFO buffer */
     ret = kfifo_in(&priv->rx_fifo.fifo, &skb, sizeof(skb));
     if (ret != sizeof(skb)) {
@@ -208,18 +218,15 @@ static void virt_net_rx_packet(struct net_device *dev, struct sk_buff *skb)
     spin_unlock_bh(&priv->rx_fifo.lock);
 }
 
-static void virt_net_timer_callback(struct timer_list *t)
+static void virt_net_work_callback(struct work_struct *work)
 {
-    struct virt_net_dev_priv *priv = from_timer(priv, t, timer);
+    struct virt_net_dev_priv *priv = container_of(work, struct virt_net_dev_priv, work.work);
     struct net_device *dev = priv->netdev;
     struct sk_buff *skb;
     int ret;
 
     /* Increment the counter */
     priv->counter++;
-
-    /* Print a message */
-    printk(KERN_INFO "%s: Timer tick, counter = %lu\n", dev->name, priv->counter);
 
     /* Dequeue the received packets from the receive FIFO buffer */
     while (!is_rx_fifo_empty(&priv->rx_fifo)) {
@@ -236,8 +243,8 @@ static void virt_net_timer_callback(struct timer_list *t)
         virt_net_rx_packet(dev, skb);
     }
 
-    /* Reschedule the timer */
-    mod_timer(&priv->timer, jiffies + msecs_to_jiffies(1000));
+    /* Reschedule the delayed work */
+    schedule_delayed_work(&priv->work, msecs_to_jiffies(1000));
 }
 
 static int virt_net_driver_set_mac_address(struct net_device *dev, void *addr)
@@ -308,6 +315,36 @@ static int virt_net_driver_cfg80211_disconnect(struct wiphy *wiphy, struct net_d
     return 0;
 }
 
+static void virt_net_driver_get_drvinfo(struct net_device *dev, struct ethtool_drvinfo *info)
+{
+    strlcpy(info->driver, VIRT_NET_DRIVER_NAME, sizeof(info->driver));
+    strlcpy(info->version, VIRT_NET_DRIVER_VERSION, sizeof(info->version));
+    snprintf(info->bus_info, sizeof(info->bus_info), "virtual (Vendor: 0x%04X, Device: 0x%04X)", VIRT_NET_VENDOR_ID, VIRT_NET_DEVICE_ID);
+}
+
+static uint32_t virt_net_driver_get_link(struct net_device *dev)
+{
+    // Return 1 if the link is up, 0 if it's down
+    // This is a virtual driver, so we can return 1 for the link to always be up
+    return 1;
+}
+
+static int virt_net_driver_get_link_ksettings(struct net_device *dev, struct ethtool_link_ksettings *ks)
+{
+    // Get the current link settings, e.g., speed, duplex, etc.
+    // For a virtual driver, we can set default/fixed values
+    ks->base.speed = SPEED_1000;    // 1 Gbps
+    ks->base.duplex = DUPLEX_FULL;  // Full duplex
+    return 0;
+}
+
+static int virt_net_driver_set_link_ksettings(struct net_device *dev, const struct ethtool_link_ksettings *ks)
+{
+    // Set the link settings based on the provided ethtool_link_ksettings struct
+    // As this is a virtual driver, we can ignore the settings and return success
+    return 0;
+}
+
 static int __init virt_net_driver_init(void)
 {
     int ret;
@@ -342,12 +379,11 @@ static int __init virt_net_driver_init(void)
 	virt_net_dev->netdev_ops = &virt_net_dev_ops;
 
 	/* Assign the ethtool operations */
-    // TODO: Fill in necessary fields and function pointers in virt_net_dev
 	static const struct ethtool_ops virt_net_ethtool_ops = {
-		// .get_drvinfo = virt_net_driver_get_drvinfo,
-		// .get_link = virt_net_driver_get_link,
-		// .get_link_ksettings = virt_net_driver_get_link_ksettings,
-		// .set_link_ksettings = virt_net_driver_set_link_ksettings,
+		.get_drvinfo = virt_net_driver_get_drvinfo,
+		.get_link = virt_net_driver_get_link,
+		.get_link_ksettings = virt_net_driver_get_link_ksettings,
+		.set_link_ksettings = virt_net_driver_set_link_ksettings,
 		// ... other ethtool operations
 	};
 
