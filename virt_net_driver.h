@@ -5,10 +5,11 @@
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
 #include <linux/wireless.h>
-#include <net/cfg80211.h>
 #include <linux/kfifo.h>
 #include <linux/list.h>
 #include <linux/mutex.h>
+#include <linux/prandom.h>
+#include <net/cfg80211.h>
 
 /* Constants */
 #define VIRT_NET_DRIVER_NAME "virt_net_driver"
@@ -28,6 +29,15 @@ struct virt_fifo {
     spinlock_t lock;
 };
 
+/* Virtual WiFi State */
+enum virt_wifi_state {
+    VIRT_WIFI_DISCONNECTED,
+    VIRT_WIFI_SCANNING,
+    VIRT_WIFI_ASSOCIATING,
+    VIRT_WIFI_ASSOCIATED,
+    VIRT_WIFI_CONNECTED
+};
+
 /* Virtual Network Device Private Data */
 struct virt_net_dev_priv {
     struct net_device *netdev;
@@ -44,6 +54,14 @@ struct virt_net_dev_priv {
     struct list_head bss_list;
     struct list_head if_node;
     struct mutex mtx;
+    struct cfg80211_bss *assoc_bss;
+    struct ieee80211_channel *channel;
+    enum virt_wifi_state state;
+};
+
+/* Virtual WiFi Wiphy Private Data */
+struct virt_wifi_wiphy_priv {
+    struct mutex scan_mutex;
 };
 
 /* Program context */
@@ -76,6 +94,10 @@ static void virt_net_rx_packet(struct net_device *dev, struct sk_buff *skb);
 static void virt_net_work_callback(struct work_struct *work);
 static int virt_net_driver_set_mac_address(struct net_device *dev, void *addr);
 static int virt_net_driver_do_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd);
+
+/* Wireless Operations Helper Functions */
+static unsigned int simulate_assoc_delay(void);
+static int virt_wifi_send_assoc(struct net_device *dev, struct cfg80211_connect_params *params);
 
 /* Wireless Operations */
 static int virt_net_driver_cfg80211_scan(struct wiphy *wiphy, struct cfg80211_scan_request *request);
