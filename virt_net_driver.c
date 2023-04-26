@@ -4,6 +4,7 @@
 #include <linux/kfifo.h>
 #include <linux/list.h>
 #include <linux/mutex.h>
+#include <linux/prandom.h>
 #include "virt_net_driver.h"
 
 MODULE_LICENSE("GPL");
@@ -332,12 +333,69 @@ static int virt_net_driver_cfg80211_scan(struct wiphy *wiphy, struct cfg80211_sc
     return 0;
 }
 
-static int virt_net_driver_cfg80211_connect(struct wiphy *wiphy, struct net_device *dev, struct cfg80211_connect_params *params)
-{
-    // TODO: Perform a Wi-Fi connection using the virtual network driver and report the connection
-    // status using cfg80211_connect_result()
+static unsigned int simulate_assoc_delay(void) {
+    /* Helper function to simulate a random association delay */
+    /* Random delay in the range of 100ms to 500ms */
+    return 100 + (get_random_u32() % 400);
+}
 
-    printk(KERN_INFO "Virtual Wi-Fi connect initiated\n");
+static int virt_wifi_send_assoc(struct net_device *dev, struct cfg80211_connect_params *params) {
+    struct virt_net_dev_priv *netdev_priv_data = netdev_priv(dev);
+    unsigned int assoc_delay;
+
+    /* Simulate the time it takes to send an association request and receive a response */
+    assoc_delay = simulate_assoc_delay();
+    msleep(assoc_delay);
+
+    /* Update the state to reflect successful association */
+    netdev_priv_data->state = VIRT_WIFI_CONNECTED;
+
+    /* Optionally, you can notify the upper layers about the association event */
+    cfg80211_connect_result(dev, params->bssid, params->ie, params->ie_len, NULL, 0, WLAN_STATUS_SUCCESS, GFP_KERNEL);
+
+    /* Return 0 to indicate success */
+    return 0;
+}
+
+static int virt_net_driver_cfg80211_connect(struct wiphy *wiphy, struct net_device *dev, struct cfg80211_connect_params *params) {
+    struct virt_wifi_wiphy_priv *priv = wiphy_priv(wiphy);
+    struct virt_net_dev_priv *netdev_priv_data = netdev_priv(dev);
+    struct cfg80211_bss *bss;
+    struct ieee80211_channel *channel;
+    int err;
+
+    if (!params->bssid || !params->ssid) {
+        return -EINVAL;
+    }
+
+    mutex_lock(&priv->scan_mutex);
+    bss = cfg80211_get_bss(wiphy, NULL, params->bssid, params->ssid, params->ssid_len, IEEE80211_BSS_TYPE_ANY, IEEE80211_PRIVACY_ANY);
+    mutex_unlock(&priv->scan_mutex);
+
+    if (!bss) {
+        return -ENOENT;
+    }
+
+    channel = bss->channel;
+    if (channel->flags & IEEE80211_CHAN_DISABLED) {
+        cfg80211_put_bss(wiphy, bss);
+        return -EINVAL;
+    }
+
+    netdev_priv_data->assoc_bss = bss;
+    netdev_priv_data->channel = channel;
+    netdev_priv_data->state = VIRT_WIFI_ASSOCIATING;
+
+    err = virt_wifi_send_assoc(dev, params);
+    if (err) {
+        cfg80211_put_bss(wiphy, bss);
+        netdev_priv_data->assoc_bss = NULL;
+        netdev_priv_data->channel = NULL;
+        netdev_priv_data->state = VIRT_WIFI_DISCONNECTED;
+        return err;
+    }
+
+    cfg80211_connect_result(dev, params->bssid, params->ie, params->ie_len, NULL, 0, WLAN_STATUS_SUCCESS, GFP_KERNEL);
 
     return 0;
 }
