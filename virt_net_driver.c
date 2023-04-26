@@ -365,7 +365,8 @@ static const struct ethtool_ops virt_net_ethtool_ops = {
     // ... other ethtool operations
 };
 
-static int add_virt_if(int identifier)
+/* create virtual interface and add to global context */
+static int virt_if_add(int identifier)
 {
     int error;
 
@@ -438,8 +439,27 @@ static int add_virt_if(int identifier)
     return 0;
 }
 
-static int delete_virt_if(struct virt_net_dev_priv* priv)
+/* kernel callback for changing interface type */
+/* to be used in struct cfg80211_ops */
+static int virt_if_configure(struct wiphy* wiphy, struct net_device* dev, enum nl80211_iftype type, struct vif_params* params)
 {
+    if (type == NL80211_IFTYPE_STATION) {
+        dev->ieee80211_ptr->iftype = NL80211_IFTYPE_STATION;
+    } 
+    else if (type == NL80211_IFTYPE_AP) {
+        dev->ieee80211_ptr->iftype = NL80211_IFTYPE_AP;
+    }
+    else {
+        printk(KERN_ERR "%s: Failed to change interface -- Invalid interface type [%u]\n", VIRT_NET_DRIVER_NAME, type);
+        return -EINVAL;
+    }
+    return 0;
+}
+
+/* Delete virtual interface and free */
+static int virt_if_delete(struct virt_net_dev_priv* priv)
+{
+    //TODO: Error checking -- but I'm just happy it works for now ;_;
     mutex_lock(&priv->mtx);
     // stop transfer queues and queued work
     netif_stop_queue(priv->netdev);
@@ -485,7 +505,7 @@ static int __init virt_net_driver_init(void)
     printk(KERN_INFO "%s: Creating interfaces\n", VIRT_NET_DRIVER_NAME);
     for (int i = 0; i < MAX_IF_NUM; i++)
     {
-        add_virt_if(i);
+        virt_if_add(i);
     }
     printk(KERN_INFO "%s: Interfaces created\n", VIRT_NET_DRIVER_NAME);
 
@@ -501,7 +521,7 @@ static void __exit virt_net_driver_exit(void)
     struct virt_net_dev_priv *priv = NULL, *tmp = NULL;
     list_for_each_entry_safe(priv, tmp, &context->if_list, if_node)
     {
-        delete_virt_if(priv);
+        virt_if_delete(priv);
     }
 
     /* Free context */
