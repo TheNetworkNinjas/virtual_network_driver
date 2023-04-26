@@ -31,6 +31,7 @@ struct virt_fifo {
 /* Virtual Network Device Private Data */
 struct virt_net_dev_priv {
     struct net_device *netdev;
+    struct wiphy *wiphy;
     struct cfg80211_scan_request *scan_request;
     struct cfg80211_connect_params *connect_params;
     struct work_struct scan_work;

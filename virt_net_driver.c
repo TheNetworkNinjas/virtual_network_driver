@@ -365,33 +365,39 @@ static const struct ethtool_ops virt_net_ethtool_ops = {
     // ... other ethtool operations
 };
 
-/* create virtual interface and add to global context */
+/* Create virtual interface and add to global context */
 static int virt_if_add(int identifier)
 {
     int error;
 
-    // new net device
+    /* New net device */
     struct net_device* virt_net_dev = NULL;
-    // private values of new net device
+
+    /* Private values of new net device */
     struct virt_net_dev_priv *priv = NULL;
 
-    // allocating new device
+    /* Allocating new device */
+    virt_net_dev = alloc_netdev(sizeof(struct virt_net_dev_priv), NET_DEV_NAME, NET_NAME_ENUM, ether_setup);
     // virt_net_dev = alloc_netdev(sizeof(struct virt_net_dev_priv), NET_DEV_NAME, NET_NAME_ENUM, ether_setup);
     // virt_net_dev = alloc_etherdev(sizeof(struct virt_net_dev_priv));
-    virt_net_dev = alloc_netdev(sizeof(struct virt_net_dev_priv), NET_DEV_NAME, NET_NAME_ENUM, ether_setup);
     if (!virt_net_dev) {
         printk(KERN_ERR "%s: Failed to allocate net_device\n", VIRT_NET_DRIVER_NAME);
-        // free wiphy?
+
+        /* Free wiphy object if necessary */
+        if (priv->wiphy) {
+            wiphy_unregister(priv->wiphy);
+            wiphy_free(priv->wiphy);
+        }
         return -ENOMEM;
     }
     else {
         printk(KERN_INFO "%s: private virtual net_device allocated\n", VIRT_NET_DRIVER_NAME);
     }
 
-    // getting priv values
+    /* Getting priv values */
     priv = netdev_priv(virt_net_dev);
 
-    // setting private values
+    /* Setting private values */
     priv->netdev = virt_net_dev;
 
     /* Wireless_dev values */
@@ -408,15 +414,18 @@ static int virt_if_add(int identifier)
     strlcpy(virt_net_dev->name, name, sizeof(virt_net_dev->name));
     memcpy((void*) priv->netdev->dev_addr, name, ETH_ALEN);
 
-    /* assign ops */
-	virt_net_dev->netdev_ops = &virt_net_dev_ops;
-	virt_net_dev->ethtool_ops = &virt_net_ethtool_ops;
+    /* Assign ops */
+    virt_net_dev->netdev_ops = &virt_net_dev_ops;
+    virt_net_dev->ethtool_ops = &virt_net_ethtool_ops;
 
-    /* regsiter device */ 
+    /* Register device */ 
     error = register_netdev(priv->netdev);
     if (error) {
         printk(KERN_ERR "%s: Failed to register net_device\n", VIRT_NET_DRIVER_NAME);
         free_netdev(priv->netdev);
+        // TODO: Free wiphy object if necessary
+        // wiphy_unregister(wiphy);
+        // wiphy_free(wiphy);
         return -ENOMEM;
     }
 
@@ -429,7 +438,7 @@ static int virt_if_add(int identifier)
     /* init connection info */ 
     /* init timers */
 
-    /* add to interface list */
+    /* Add to interface list */
     mutex_lock(&context->mtx);
     list_add_tail(&priv->if_node, &context->if_list);
     mutex_unlock(&context->mtx);
@@ -443,15 +452,16 @@ static int virt_if_add(int identifier)
 /* to be used in struct cfg80211_ops */
 static int virt_if_configure(struct wiphy* wiphy, struct net_device* dev, enum nl80211_iftype type, struct vif_params* params)
 {
-    if (type == NL80211_IFTYPE_STATION) {
-        dev->ieee80211_ptr->iftype = NL80211_IFTYPE_STATION;
-    } 
-    else if (type == NL80211_IFTYPE_AP) {
-        dev->ieee80211_ptr->iftype = NL80211_IFTYPE_AP;
-    }
-    else {
-        printk(KERN_ERR "%s: Failed to change interface -- Invalid interface type [%u]\n", VIRT_NET_DRIVER_NAME, type);
-        return -EINVAL;
+    switch (type) {
+        case NL80211_IFTYPE_STATION:
+            dev->ieee80211_ptr->iftype = NL80211_IFTYPE_STATION;
+            break;
+        case NL80211_IFTYPE_AP:
+            dev->ieee80211_ptr->iftype = NL80211_IFTYPE_AP;
+            break;
+        default:
+            printk(KERN_ERR "%s: Failed to change interface -- Invalid interface type [%u]\n", VIRT_NET_DRIVER_NAME, type);
+            return -EINVAL;
     }
     return 0;
 }
