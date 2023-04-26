@@ -298,8 +298,8 @@ static int virt_net_driver_cfg80211_scan(struct wiphy *wiphy, struct cfg80211_sc
     return 0;
 }
 
-/* Helper function to simulate a random association delay */
 static unsigned int simulate_assoc_delay(void) {
+    /* Helper function to simulate a random association delay */
     /* Random delay in the range of 100ms to 500ms */
     return 100 + (get_random_u32() % 400);
 }

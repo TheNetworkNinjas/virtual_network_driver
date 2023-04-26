@@ -32,9 +32,7 @@ struct virt_fifo {
 /* Virtual WiFi State */
 enum virt_wifi_state {
     VIRT_WIFI_DISCONNECTED,
-    VIRT_WIFI_SCANNING,
     VIRT_WIFI_ASSOCIATING,
-    VIRT_WIFI_ASSOCIATED,
     VIRT_WIFI_CONNECTED
 };
 
