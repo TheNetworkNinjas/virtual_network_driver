@@ -8,6 +8,7 @@
 #include <net/cfg80211.h>
 #include <linux/kfifo.h>
 #include <linux/list.h>
+#include <linux/mutex.h>
 
 /* Constants */
 #define VIRT_NET_DRIVER_NAME "virt_net_driver"
@@ -17,6 +18,9 @@
 #define VIRT_NET_DRIVER_MTU 1500
 #define VIRT_NET_VENDOR_ID 0x10ec   // Realtek Semiconductor Corp.
 #define VIRT_NET_DEVICE_ID 0x8125   // RTL8125 2.5GbE Controller
+#define VIRT_NET_INTF_NAME "vif"
+#define NET_DEV_NAME VIRT_NET_INTF_NAME "%d"
+#define MAX_IF_NUM 3
 
 /* Virtual FIFO buffer for packet transmission */
 struct virt_fifo {
@@ -27,6 +31,7 @@ struct virt_fifo {
 /* Virtual Network Device Private Data */
 struct virt_net_dev_priv {
     struct net_device *netdev;
+    struct wiphy *wiphy;
     struct cfg80211_scan_request *scan_request;
     struct cfg80211_connect_params *connect_params;
     struct work_struct scan_work;
@@ -36,13 +41,16 @@ struct virt_net_dev_priv {
     struct virt_fifo tx_fifo;
     struct virt_fifo rx_fifo;
     unsigned long counter;
+    struct list_head bss_list;
+    struct list_head if_node;
+    struct mutex mtx;
 };
 
 /* Program context */
 struct virt_adapter_context {
+    struct mutex mtx;
     struct list_head ap_list;   // List of access points
     struct list_head if_list;   // List of virtual interfaces
-    spinlock_t       lock;      // Lock for modifying program context
 };
 
 /* Function Prototypes */
@@ -73,5 +81,10 @@ static int virt_net_driver_do_ioctl(struct net_device *dev, struct ifreq *ifr, i
 static int virt_net_driver_cfg80211_scan(struct wiphy *wiphy, struct cfg80211_scan_request *request);
 static int virt_net_driver_cfg80211_connect(struct wiphy *wiphy, struct net_device *dev, struct cfg80211_connect_params *params);
 static int virt_net_driver_cfg80211_disconnect(struct wiphy *wiphy, struct net_device *dev, u16 reason_code);
+
+/* Interface Configuration Operatins */
+static int virt_if_add(int identifier);
+static int virt_if_configure(struct wiphy* wiphy, struct net_device *dev, enum nl80211_iftype type, struct vif_params* params);
+static int virt_if_delete(struct virt_net_dev_priv* priv);
 
 #endif /* _VIRT_NET_DRIVER_H_ */

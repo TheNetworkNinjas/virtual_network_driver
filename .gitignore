@@ -7,3 +7,5 @@
 *.d
 .vscode
 *.swp
+.cache/
+compile_commands.json
