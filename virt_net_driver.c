@@ -512,8 +512,6 @@ static int virt_if_add(struct wiphy* wiphy, int identifier)
 
     /* Allocating new device */
     virt_net_dev = alloc_netdev(sizeof(struct virt_net_dev_priv), NET_DEV_NAME, NET_NAME_ENUM, ether_setup);
-    // virt_net_dev = alloc_netdev(sizeof(struct virt_net_dev_priv), NET_DEV_NAME, NET_NAME_ENUM, ether_setup);
-    // virt_net_dev = alloc_etherdev(sizeof(struct virt_net_dev_priv));
     if (!virt_net_dev) {
         printk(KERN_ERR "%s: Failed to allocate net_device\n", VIRT_NET_DRIVER_NAME);
 
@@ -565,6 +563,12 @@ static int virt_if_add(struct wiphy* wiphy, int identifier)
     /* init mutex */
     mutex_init(&priv->mtx);
 
+    /* init other values) */
+    // the device starts as "not connected" so these values are 0
+    memset(priv->bssid, 0, ETH_ALEN);
+    memset(priv->ssid, 0, IEEE80211_MAX_SSID_LEN);
+
+
     /* init buffers */
     init_virt_hw_resource(priv->netdev);
 
@@ -603,6 +607,12 @@ static int virt_if_configure(struct wiphy* wiphy, struct net_device* dev, enum n
 static int virt_if_delete(struct virt_net_dev_priv* priv)
 {
     struct wiphy* wiphy = priv->wdev.wiphy;
+
+    // stop AP if device in an AP
+    if (priv->is_ap) {
+        ap_terminate(wiphy, priv->netdev, 0);
+    } 
+
     //TODO: Error checking -- but I'm just happy it works for now ;_;
     mutex_lock(&priv->mtx);
     // stop transfer queues and queued work
@@ -636,20 +646,21 @@ static struct cfg80211_ops wifi_dev_ops = {
     .connect = virt_net_driver_cfg80211_connect,
     .disconnect = virt_net_driver_cfg80211_disconnect,
     .start_ap = ap_init,
+    .stop_ap = ap_terminate,
 };
 
 /* Supported channels for wifi device */
 /* https://en.wikipedia.org/wiki/List_of_WLAN_channels */
 static struct ieee80211_channel supported_channels[] = {
-    {.band = NL80211_BAND_2GHZ, .hw_value = 1, .center_freq = 2412,},
-    {.band = NL80211_BAND_2GHZ, .hw_value = 2, .center_freq = 2417,},
-    {.band = NL80211_BAND_2GHZ, .hw_value = 3, .center_freq = 2422,},
-    {.band = NL80211_BAND_2GHZ, .hw_value = 4, .center_freq = 2427,},
-    {.band = NL80211_BAND_2GHZ, .hw_value = 5, .center_freq = 2432,},
-    {.band = NL80211_BAND_2GHZ, .hw_value = 6, .center_freq = 2437,},
-    {.band = NL80211_BAND_2GHZ, .hw_value = 7, .center_freq = 2442,},
-    {.band = NL80211_BAND_2GHZ, .hw_value = 8, .center_freq = 2447,},
-    {.band = NL80211_BAND_2GHZ, .hw_value = 9, .center_freq = 2452,},
+    {.band = NL80211_BAND_2GHZ, .hw_value = 1,  .center_freq = 2412,},
+    {.band = NL80211_BAND_2GHZ, .hw_value = 2,  .center_freq = 2417,},
+    {.band = NL80211_BAND_2GHZ, .hw_value = 3,  .center_freq = 2422,},
+    {.band = NL80211_BAND_2GHZ, .hw_value = 4,  .center_freq = 2427,},
+    {.band = NL80211_BAND_2GHZ, .hw_value = 5,  .center_freq = 2432,},
+    {.band = NL80211_BAND_2GHZ, .hw_value = 6,  .center_freq = 2437,},
+    {.band = NL80211_BAND_2GHZ, .hw_value = 7,  .center_freq = 2442,},
+    {.band = NL80211_BAND_2GHZ, .hw_value = 8,  .center_freq = 2447,},
+    {.band = NL80211_BAND_2GHZ, .hw_value = 9,  .center_freq = 2452,},
     {.band = NL80211_BAND_2GHZ, .hw_value = 10, .center_freq = 2457,},
     {.band = NL80211_BAND_2GHZ, .hw_value = 11, .center_freq = 2462,},
     {.band = NL80211_BAND_2GHZ, .hw_value = 12, .center_freq = 2467,},
@@ -659,12 +670,12 @@ static struct ieee80211_channel supported_channels[] = {
 
 /* Supported rates for wifi device */
 static struct ieee80211_rate supported_rates[] = {
-    {.bitrate = 10, .hw_value = 0x1,},
-    {.bitrate = 20, .hw_value = 0x2,},
-    {.bitrate = 55, .hw_value = 0x4,},
+    {.bitrate = 10,  .hw_value = 0x1,},
+    {.bitrate = 20,  .hw_value = 0x2,},
+    {.bitrate = 55,  .hw_value = 0x4,},
     {.bitrate = 110, .hw_value = 0x8,},
-    {.bitrate = 60, .hw_value = 0x10,},
-    {.bitrate = 90, .hw_value = 0x20,},
+    {.bitrate = 60,  .hw_value = 0x10,},
+    {.bitrate = 90,  .hw_value = 0x20,},
     {.bitrate = 120, .hw_value = 0x40,},
     {.bitrate = 180, .hw_value = 0x80,},
     {.bitrate = 240, .hw_value = 0x100,},
@@ -738,6 +749,38 @@ static int ap_init(struct wiphy* wiphy, struct net_device* dev, struct cfg80211_
     INIT_LIST_HEAD(&priv->bss_list);
 
     priv->is_ap = true;
+    return 0;
+}
+
+static int ap_terminate(struct wiphy* wiphy, struct net_device* dev, unsigned int link_id)
+{
+    struct virt_net_dev_priv* priv = netdev_priv(dev);
+
+    /* Check if device is an AP */
+    if (!priv->is_ap) {
+        printk(KERN_ERR "%s: Attempting to terminate AP of a non-AP interface\n", VIRT_NET_DRIVER_NAME);
+        // maybe could use a different error code
+        return -ENOMEM;
+    }
+
+    /* Stop beaconing */
+    // we don't really need to do this because we are not really scanning?
+
+    /* Delete BSS list */
+    // loop through bss list
+    struct virt_net_dev_priv *list_pos = NULL, *tmp = NULL;
+    list_for_each_entry_safe(list_pos, tmp, &priv->bss_list, bss_list)
+    {
+        list_del(&tmp->bss_list);
+    }
+
+    /* Remove from context's ap_list */
+    mutex_lock(&context->mtx);
+    list_del(&priv->ap_node);
+    mutex_unlock(&context->mtx);
+
+    /* set interface to non AP */
+    priv->is_ap = false;
     return 0;
 }
 

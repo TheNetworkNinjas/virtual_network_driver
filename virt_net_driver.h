@@ -121,5 +121,6 @@ static struct wiphy* wiphy_add(void);
 
 /* Access Point Options */
 static int ap_init(struct wiphy*, struct net_device* dev, struct cfg80211_ap_settings*);
+static int ap_terminate(struct wiphy*, struct net_device*, unsigned int);
 
 #endif /* _VIRT_NET_DRIVER_H_ */
