@@ -95,6 +95,8 @@ static int virt_net_driver_do_ioctl(struct net_device *dev, struct ifreq *ifr, i
 
 /* Wireless Operations Helper Functions */
 static unsigned int simulate_assoc_delay(void);
+static unsigned int simulate_disassoc_delay(void);
+static void virt_net_disconnect(struct virt_net_dev_priv *priv);
 static int virt_wifi_send_assoc(struct net_device *dev, struct cfg80211_connect_params *params);
 
 /* Wireless Operations */

@@ -400,13 +400,51 @@ static int virt_net_driver_cfg80211_connect(struct wiphy *wiphy, struct net_devi
     return 0;
 }
 
-static int virt_net_driver_cfg80211_disconnect(struct wiphy *wiphy, struct net_device *dev, uint16_t reason_code)
+static unsigned int simulate_disassoc_delay(void) {
+    /* Helper function to simulate a random disassociation delay */
+    /* Random delay in the range of 50ms to 250ms */
+    return 50 + (get_random_u32() % 200);
+}
+
+static void virt_net_disconnect(struct virt_net_dev_priv *priv) {
+    unsigned int disassoc_delay;
+
+    if (priv->state != VIRT_WIFI_CONNECTED) {
+        printk(KERN_INFO "Virtual Wi-Fi is not connected, nothing to disconnect\n");
+        return;
+    }
+
+    /* Simulate the time it takes to send a disassociation request and receive a response */
+    disassoc_delay = simulate_disassoc_delay();
+    msleep(disassoc_delay);
+
+    /* Update the state to reflect successful disassociation */
+    priv->state = VIRT_WIFI_DISCONNECTED;
+
+    if (priv->assoc_bss) {
+        cfg80211_put_bss(priv->wiphy, priv->assoc_bss);
+        priv->assoc_bss = NULL;
+    }
+
+    priv->channel = NULL;
+}
+
+static int virt_net_driver_cfg80211_disconnect(struct wiphy *wiphy, struct net_device *dev, u16 reason_code)
 {
-    // TODO: Perform a Wi-Fi disconnection using the virtual network driver and report the disconnection
-    // status using cfg80211_disconnected()
+    struct virt_net_dev_priv *priv = wiphy_priv(wiphy);
 
-    printk(KERN_INFO "Virtual Wi-Fi disconnect initiated\n");
+    if (!priv->connect_params) {
+        printk(KERN_INFO "Virtual Wi-Fi is not connected, nothing to disconnect\n");
+        return -ENOTCONN;
+    }
 
+    /* Perform disconnection */
+    virt_net_disconnect(priv);
+
+    /* Report disconnection status to cfg80211 */
+    cfg80211_disconnected(dev, reason_code, NULL, 0, false, GFP_KERNEL);
+
+    printk(KERN_INFO "Virtual Wi-Fi disconnected\n");
     return 0;
 }
 
