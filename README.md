@@ -55,6 +55,11 @@ This will generate a kernel module file called `virt_net_driver.ko`.
 
 ## Usage
 
+Load the cfg80211 kernel module:
+```bash
+sudo modprobe cfg80211
+```
+
 Load the virtual network driver module using `insmod`:
 
 ```bash
@@ -65,6 +70,23 @@ To check if the module has been loaded successfully, run:
 
 ```bash
 lsmod | grep virt_net_driver
+```
+
+Check if the virtual interfaces were created:
+```bash
+ifconfig
+```
+
+Bring the virtual interfaces up:
+```bash
+sudo ip link set vif0 up
+sudo ip link set vif1 up
+sudo ip link set vif2 up
+```
+
+Configure vif0 to be an AP:
+```bash
+sudo hostapd -B hostapd.conf
 ```
 
 To remove the virtual network driver module, use rmmod:
