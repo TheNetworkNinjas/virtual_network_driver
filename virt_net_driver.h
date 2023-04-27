@@ -103,8 +103,11 @@ static int virt_net_driver_cfg80211_connect(struct wiphy *wiphy, struct net_devi
 static int virt_net_driver_cfg80211_disconnect(struct wiphy *wiphy, struct net_device *dev, u16 reason_code);
 
 /* Interface Configuration Operatins */
-static int virt_if_add(int identifier);
+static int virt_if_add(struct wiphy* wiphy, int identifier);
 static int virt_if_configure(struct wiphy* wiphy, struct net_device *dev, enum nl80211_iftype type, struct vif_params* params);
 static int virt_if_delete(struct virt_net_dev_priv* priv);
+
+/* Wiphy Configuration Options */
+static struct wiphy* wiphy_add(void);
 
 #endif /* _VIRT_NET_DRIVER_H_ */

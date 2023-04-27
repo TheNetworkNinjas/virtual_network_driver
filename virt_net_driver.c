@@ -5,9 +5,10 @@
 #include <linux/list.h>
 #include <linux/mutex.h>
 #include <linux/prandom.h>
+#include <net/cfg80211.h>
 #include "virt_net_driver.h"
 
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("Dual MIT/GPL");
 MODULE_AUTHOR("Craig Opie");
 MODULE_AUTHOR("Jake Imanaka");
 MODULE_AUTHOR("Lydia Sollis");
@@ -459,7 +460,7 @@ static const struct ethtool_ops virt_net_ethtool_ops = {
 };
 
 /* Create virtual interface and add to global context */
-static int virt_if_add(int identifier)
+static int virt_if_add(struct wiphy* wiphy, int identifier)
 {
     int error;
 
@@ -494,12 +495,12 @@ static int virt_if_add(int identifier)
     priv->netdev = virt_net_dev;
 
     /* Wireless_dev values */
-    //priv->wdev.wiphy = wiphy;
+    priv->wdev.wiphy = wiphy;
     // STA by default
-    // priv->wdev.iftype = NL80211_IFTYPE_STATION;
-    // priv->netdev->ieee80211_ptr = &priv->wdev;
-    //
-    // priv->netdev->features |= NETIF_F_HW_CSUM;
+    priv->wdev.iftype = NL80211_IFTYPE_STATION;
+    priv->netdev->ieee80211_ptr = &priv->wdev;
+    
+    priv->netdev->features |= NETIF_F_HW_CSUM;
 
 	/* Set the device's name */
     char name[ETH_ALEN];
@@ -559,6 +560,74 @@ static int virt_if_configure(struct wiphy* wiphy, struct net_device* dev, enum n
     return 0;
 }
 
+/* FullMAC driver functions
+ * Represents functionalities of the wiphy device
+ */
+static struct cfg80211_ops wifi_dev_ops = {
+    .scan = virt_net_driver_cfg80211_scan,
+    .connect = virt_net_driver_cfg80211_connect,
+    .disconnect = virt_net_driver_cfg80211_disconnect,
+    .change_virtual_intf = virt_if_configure,
+};
+
+/* Supported channels for wifi device */
+static struct ieee80211_channel supported_channels[] = {
+    {.band = NL80211_BAND_2GHZ, .hw_value = 1, .center_freq = 1412,},
+    // add more channels here if needed
+};
+
+/* Supported rates for wifi device */
+static struct ieee80211_rate supported_rates[] = {
+    {.bitrate = 10, .hw_value = 0x1,},
+    // add more rates here if needed
+};
+
+/* Supported bands for wifi device */
+static struct ieee80211_supported_band supported_bands = {
+    .ht_cap.cap = IEEE80211_HT_CAP_SGI_20,
+    .ht_cap.ht_supported = false,
+    .bitrates = supported_rates,
+    .n_bitrates = ARRAY_SIZE(supported_rates),
+    .channels = supported_channels,
+    .n_channels = ARRAY_SIZE(supported_channels),
+};
+
+/* create a wiphy device */
+static struct wiphy* wiphy_add(void)
+{
+    int error = 0;
+    struct wiphy* wiphy = NULL;
+
+    // setting default wiphy options 
+
+    // allocate new wiphy structure
+    wiphy = wiphy_new(&wifi_dev_ops, 0);
+    if (!wiphy) {
+        printk(KERN_ERR "%s: Failed to allocate new wiphy device\n", VIRT_NET_DRIVER_NAME);
+        return NULL;
+    }
+
+    // type of interface
+    // AP or STA
+    wiphy->interface_modes = BIT(NL80211_IFTYPE_STATION) | BIT(NL80211_IFTYPE_AP);
+
+    // supported bands
+    wiphy->bands[NL80211_BAND_2GHZ] = &supported_bands;
+
+    // flags
+    wiphy->flags |= WIPHY_FLAG_NETNS_OK;
+
+    // regsiter wiphy 
+    error = wiphy_register(wiphy);
+    if (error < 0) {
+        printk(KERN_ERR "%s: Failed to register new wiphy device\n", VIRT_NET_DRIVER_NAME);
+        wiphy_free(wiphy);
+        return NULL;
+    }
+
+    return wiphy;
+}
+
 /* Delete virtual interface and free */
 static int virt_if_delete(struct virt_net_dev_priv* priv)
 {
@@ -608,7 +677,11 @@ static int __init virt_net_driver_init(void)
     printk(KERN_INFO "%s: Creating interfaces\n", VIRT_NET_DRIVER_NAME);
     for (int i = 0; i < MAX_IF_NUM; i++)
     {
-        virt_if_add(i);
+        struct wiphy* wiphy = wiphy_add();
+        if (wiphy == NULL) {
+            return -ENOMEM;
+        }
+        virt_if_add(wiphy, i);
     }
     printk(KERN_INFO "%s: Interfaces created\n", VIRT_NET_DRIVER_NAME);
 
