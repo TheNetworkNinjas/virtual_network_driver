@@ -8,7 +8,7 @@
 #include <net/cfg80211.h>
 #include "virt_net_driver.h"
 
-MODULE_LICENSE("Dual MIT/GPL");
+MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Craig Opie");
 MODULE_AUTHOR("Jake Imanaka");
 MODULE_AUTHOR("Lydia Sollis");
@@ -517,9 +517,8 @@ static int virt_if_add(struct wiphy* wiphy, int identifier)
     if (error) {
         printk(KERN_ERR "%s: Failed to register net_device\n", VIRT_NET_DRIVER_NAME);
         free_netdev(priv->netdev);
-        // TODO: Free wiphy object if necessary
-        // wiphy_unregister(wiphy);
-        // wiphy_free(wiphy);
+        wiphy_unregister(wiphy);
+        wiphy_free(wiphy);
         return -ENOMEM;
     }
 
@@ -564,10 +563,10 @@ static int virt_if_configure(struct wiphy* wiphy, struct net_device* dev, enum n
  * Represents functionalities of the wiphy device
  */
 static struct cfg80211_ops wifi_dev_ops = {
+    .change_virtual_intf = virt_if_configure,
     .scan = virt_net_driver_cfg80211_scan,
     .connect = virt_net_driver_cfg80211_connect,
     .disconnect = virt_net_driver_cfg80211_disconnect,
-    .change_virtual_intf = virt_if_configure,
 };
 
 /* Supported channels for wifi device */
@@ -617,6 +616,8 @@ static struct wiphy* wiphy_add(void)
     // flags
     wiphy->flags |= WIPHY_FLAG_NETNS_OK;
 
+    wiphy->max_scan_ssids = 10;
+
     // regsiter wiphy 
     error = wiphy_register(wiphy);
     if (error < 0) {
@@ -631,6 +632,7 @@ static struct wiphy* wiphy_add(void)
 /* Delete virtual interface and free */
 static int virt_if_delete(struct virt_net_dev_priv* priv)
 {
+    struct wiphy* wiphy = priv->wdev.wiphy;
     //TODO: Error checking -- but I'm just happy it works for now ;_;
     mutex_lock(&priv->mtx);
     // stop transfer queues and queued work
@@ -642,10 +644,14 @@ static int virt_if_delete(struct virt_net_dev_priv* priv)
     mutex_unlock(&priv->mtx);
 
     // unregister device
-     unregister_netdev(priv->netdev);
-
+    unregister_netdev(priv->netdev);
     // free device
     free_netdev(priv->netdev);
+
+    // unregister wiphy dev
+    wiphy_unregister(wiphy);
+    // free wiphy
+    wiphy_free(wiphy);
 
     // free wiphy device
     return 0;
