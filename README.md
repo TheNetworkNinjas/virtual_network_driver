@@ -35,12 +35,7 @@ The virtual network driver can be loaded and unloaded using standard Linux kerne
 To compile a Loadable Kernel Module, you need the kernel headers matching the kernel version you are working with. To resolve this issue, install the kernel headers and development tools for your Linux distribution. For Fedora, you can use the following command:
 
 ```bash
-sudo dnf install kernel-devel kernel-headers gcc make iw
-```
-
-You will also need to load the cfg80211 module if it is not already loaded:
-```bash
-sudo modprobe cfg80211
+sudo dnf install kernel-devel kernel-headers gcc make iw hostapd
 ```
 
 ## Building
