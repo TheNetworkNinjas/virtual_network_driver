@@ -262,7 +262,7 @@ static int virt_net_driver_set_mac_address(struct net_device *dev, void *addr)
     }
 
     /* Update the device's MAC address */
-    memcpy(dev->dev_addr, sa->sa_data, dev->addr_len);
+    memcpy((void*)dev->dev_addr, sa->sa_data, dev->addr_len);
 
     printk(KERN_INFO "%s: MAC address set to %pM\n", dev->name, dev->dev_addr);
 
@@ -295,39 +295,41 @@ static int virt_net_driver_cfg80211_scan(struct wiphy *wiphy, struct cfg80211_sc
 
     printk(KERN_INFO "Virtual Wi-Fi scan initiated\n");
 
+    
+
     /* Simulate a Wi-Fi scan with some fake access points */
-    for (i = 0; i < request->n_ssids; i++) {
-        struct cfg80211_bss *bss;
-        struct ieee80211_channel *channel;
-        uint8_t bssid[ETH_ALEN] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55};
-        uint32_t signal = -30;  // dBm
-        struct ieee80211_mgmt mgmt = {};
-
-        /* Use the first channel from the request for the fake access point */
-        channel = request->channels[0];
-
-        /* Set the BSSID for the fake BSS */
-        memcpy(mgmt.bssid, bssid, ETH_ALEN);
-
-        /* Set the frame control field to indicate a beacon frame */
-        mgmt.frame_control = cpu_to_le16(IEEE80211_FTYPE_MGMT | IEEE80211_STYPE_BEACON);
-
-        /* Set the timestamp field for the fake BSS */
-        mgmt.u.beacon.timestamp = cpu_to_le64(ktime_get_real_ns());
-
-        /* Create a fake BSS */
-        bss = cfg80211_inform_bss_frame(wiphy, channel, &mgmt, sizeof(mgmt), signal, GFP_KERNEL);
-        if (!bss) {
-            printk(KERN_ERR "Failed to create a fake BSS\n");
-            continue;
-        }
-
-        /* Notify the cfg80211 subsystem about the new BSS */
-        cfg80211_put_bss(wiphy, bss);
-    }
+    // for (i = 0; i < request->n_ssids; i++) {
+    //     struct cfg80211_bss *bss;
+    //     struct ieee80211_channel *channel;
+    //     uint8_t bssid[ETH_ALEN] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55};
+    //     uint32_t signal = -30;  // dBm
+    //     struct ieee80211_mgmt mgmt = {};
+    //
+    //     /* Use the first channel from the request for the fake access point */
+    //     channel = request->channels[0];
+    //
+    //     /* Set the BSSID for the fake BSS */
+    //     memcpy(mgmt.bssid, bssid, ETH_ALEN);
+    //
+    //     /* Set the frame control field to indicate a beacon frame */
+    //     mgmt.frame_control = cpu_to_le16(IEEE80211_FTYPE_MGMT | IEEE80211_STYPE_BEACON);
+    //
+    //     /* Set the timestamp field for the fake BSS */
+    //     mgmt.u.beacon.timestamp = cpu_to_le64(ktime_get_real_ns());
+    //
+    //     /* Create a fake BSS */
+    //     bss = cfg80211_inform_bss_frame(wiphy, channel, &mgmt, sizeof(mgmt), signal, GFP_KERNEL);
+    //     if (!bss) {
+    //         printk(KERN_ERR "Failed to create a fake BSS\n");
+    //         continue;
+    //     }
+    //
+    //     /* Notify the cfg80211 subsystem about the new BSS */
+    //     cfg80211_put_bss(wiphy, bss);
+    // }
 
     /* Notify the cfg80211 subsystem that the scan is complete */
-    cfg80211_scan_done(request, false);
+    //cfg80211_scan_done(request, false);
 
     printk(KERN_INFO "Virtual Wi-Fi scan complete\n");
 
@@ -510,8 +512,6 @@ static int virt_if_add(struct wiphy* wiphy, int identifier)
 
     /* Allocating new device */
     virt_net_dev = alloc_netdev(sizeof(struct virt_net_dev_priv), NET_DEV_NAME, NET_NAME_ENUM, ether_setup);
-    // virt_net_dev = alloc_netdev(sizeof(struct virt_net_dev_priv), NET_DEV_NAME, NET_NAME_ENUM, ether_setup);
-    // virt_net_dev = alloc_etherdev(sizeof(struct virt_net_dev_priv));
     if (!virt_net_dev) {
         printk(KERN_ERR "%s: Failed to allocate net_device\n", VIRT_NET_DRIVER_NAME);
 
@@ -563,6 +563,12 @@ static int virt_if_add(struct wiphy* wiphy, int identifier)
     /* init mutex */
     mutex_init(&priv->mtx);
 
+    /* init other values) */
+    // the device starts as "not connected" so these values are 0
+    memset(priv->bssid, 0, ETH_ALEN);
+    memset(priv->ssid, 0, IEEE80211_MAX_SSID_LEN);
+
+
     /* init buffers */
     init_virt_hw_resource(priv->netdev);
 
@@ -597,6 +603,40 @@ static int virt_if_configure(struct wiphy* wiphy, struct net_device* dev, enum n
     return 0;
 }
 
+/* Delete virtual interface and free */
+static int virt_if_delete(struct virt_net_dev_priv* priv)
+{
+    struct wiphy* wiphy = priv->wdev.wiphy;
+
+    // stop AP if device in an AP
+    if (priv->is_ap) {
+        ap_terminate(wiphy, priv->netdev, 0);
+    } 
+
+    //TODO: Error checking -- but I'm just happy it works for now ;_;
+    mutex_lock(&priv->mtx);
+    // stop transfer queues and queued work
+    netif_stop_queue(priv->netdev);
+
+    // stop pending scans
+    // TODO: after scan is implemented
+
+    mutex_unlock(&priv->mtx);
+
+    // unregister device
+    unregister_netdev(priv->netdev);
+    // free device
+    free_netdev(priv->netdev);
+
+    // unregister wiphy dev
+    wiphy_unregister(wiphy);
+    // free wiphy
+    wiphy_free(wiphy);
+
+    // free wiphy device
+    return 0;
+}
+
 /* FullMAC driver functions
  * Represents functionalities of the wiphy device
  */
@@ -605,18 +645,43 @@ static struct cfg80211_ops wifi_dev_ops = {
     .scan = virt_net_driver_cfg80211_scan,
     .connect = virt_net_driver_cfg80211_connect,
     .disconnect = virt_net_driver_cfg80211_disconnect,
+    .start_ap = ap_init,
+    .stop_ap = ap_terminate,
 };
 
 /* Supported channels for wifi device */
+/* https://en.wikipedia.org/wiki/List_of_WLAN_channels */
 static struct ieee80211_channel supported_channels[] = {
-    {.band = NL80211_BAND_2GHZ, .hw_value = 1, .center_freq = 1412,},
-    // add more channels here if needed
+    {.band = NL80211_BAND_2GHZ, .hw_value = 1,  .center_freq = 2412,},
+    {.band = NL80211_BAND_2GHZ, .hw_value = 2,  .center_freq = 2417,},
+    {.band = NL80211_BAND_2GHZ, .hw_value = 3,  .center_freq = 2422,},
+    {.band = NL80211_BAND_2GHZ, .hw_value = 4,  .center_freq = 2427,},
+    {.band = NL80211_BAND_2GHZ, .hw_value = 5,  .center_freq = 2432,},
+    {.band = NL80211_BAND_2GHZ, .hw_value = 6,  .center_freq = 2437,},
+    {.band = NL80211_BAND_2GHZ, .hw_value = 7,  .center_freq = 2442,},
+    {.band = NL80211_BAND_2GHZ, .hw_value = 8,  .center_freq = 2447,},
+    {.band = NL80211_BAND_2GHZ, .hw_value = 9,  .center_freq = 2452,},
+    {.band = NL80211_BAND_2GHZ, .hw_value = 10, .center_freq = 2457,},
+    {.band = NL80211_BAND_2GHZ, .hw_value = 11, .center_freq = 2462,},
+    {.band = NL80211_BAND_2GHZ, .hw_value = 12, .center_freq = 2467,},
+    {.band = NL80211_BAND_2GHZ, .hw_value = 13, .center_freq = 2472,},
+    {.band = NL80211_BAND_2GHZ, .hw_value = 14, .center_freq = 2487,},
 };
 
 /* Supported rates for wifi device */
 static struct ieee80211_rate supported_rates[] = {
-    {.bitrate = 10, .hw_value = 0x1,},
-    // add more rates here if needed
+    {.bitrate = 10,  .hw_value = 0x1,},
+    {.bitrate = 20,  .hw_value = 0x2,},
+    {.bitrate = 55,  .hw_value = 0x4,},
+    {.bitrate = 110, .hw_value = 0x8,},
+    {.bitrate = 60,  .hw_value = 0x10,},
+    {.bitrate = 90,  .hw_value = 0x20,},
+    {.bitrate = 120, .hw_value = 0x40,},
+    {.bitrate = 180, .hw_value = 0x80,},
+    {.bitrate = 240, .hw_value = 0x100,},
+    {.bitrate = 360, .hw_value = 0x200,},
+    {.bitrate = 480, .hw_value = 0x400,},
+    {.bitrate = 540, .hw_value = 0x800,},
 };
 
 /* Supported bands for wifi device */
@@ -667,34 +732,57 @@ static struct wiphy* wiphy_add(void)
     return wiphy;
 }
 
-/* Delete virtual interface and free */
-static int virt_if_delete(struct virt_net_dev_priv* priv)
+/* callback to initialize an interface as an AP */
+static int ap_init(struct wiphy* wiphy, struct net_device* dev, struct cfg80211_ap_settings* ap_settings)
 {
-    struct wiphy* wiphy = priv->wdev.wiphy;
-    //TODO: Error checking -- but I'm just happy it works for now ;_;
-    mutex_lock(&priv->mtx);
-    // stop transfer queues and queued work
-    netif_stop_queue(priv->netdev);
+    struct virt_net_dev_priv* priv = netdev_priv(dev);
 
-    // stop pending scans
-    // TODO: after scan is implemented
+    // set ssid and bssid
+    priv->ssid_len = ap_settings->ssid_len;
+    memcpy(priv->ssid, ap_settings->ssid, ap_settings->ssid_len);
+    memcpy(priv->bssid, priv->netdev->dev_addr, ETH_ALEN);
 
-    mutex_unlock(&priv->mtx);
+    // add to ap list
+    list_add_tail(&priv->ap_node, &context->ap_list);
 
-    // unregister device
-    unregister_netdev(priv->netdev);
-    // free device
-    free_netdev(priv->netdev);
+    // initialize bss list 
+    INIT_LIST_HEAD(&priv->bss_list);
 
-    // unregister wiphy dev
-    wiphy_unregister(wiphy);
-    // free wiphy
-    wiphy_free(wiphy);
-
-    // free wiphy device
+    priv->is_ap = true;
     return 0;
 }
 
+static int ap_terminate(struct wiphy* wiphy, struct net_device* dev, unsigned int link_id)
+{
+    struct virt_net_dev_priv* priv = netdev_priv(dev);
+
+    /* Check if device is an AP */
+    if (!priv->is_ap) {
+        printk(KERN_ERR "%s: Attempting to terminate AP of a non-AP interface\n", VIRT_NET_DRIVER_NAME);
+        // maybe could use a different error code
+        return -ENOMEM;
+    }
+
+    /* Stop beaconing */
+    // we don't really need to do this because we are not really scanning?
+
+    /* Delete BSS list */
+    // loop through bss list
+    struct virt_net_dev_priv *list_pos = NULL, *tmp = NULL;
+    list_for_each_entry_safe(list_pos, tmp, &priv->bss_list, bss_list)
+    {
+        list_del(&tmp->bss_list);
+    }
+
+    /* Remove from context's ap_list */
+    mutex_lock(&context->mtx);
+    list_del(&priv->ap_node);
+    mutex_unlock(&context->mtx);
+
+    /* set interface to non AP */
+    priv->is_ap = false;
+    return 0;
+}
 
 static int __init virt_net_driver_init(void)
 {

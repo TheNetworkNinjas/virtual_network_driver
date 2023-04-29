@@ -49,12 +49,19 @@ struct virt_net_dev_priv {
     struct virt_fifo tx_fifo;
     struct virt_fifo rx_fifo;
     unsigned long counter;
-    struct list_head bss_list;
     struct list_head if_node;
     struct mutex mtx;
     struct cfg80211_bss *assoc_bss;
     struct ieee80211_channel *channel;
     enum virt_wifi_state state;
+    u8 ssid[IEEE80211_MAX_SSID_LEN];
+    size_t ssid_len;
+    u8 bssid[ETH_ALEN];
+    // list of all interfaces for a bss as head
+    struct list_head bss_list;
+    // AP node for global AP list
+    struct list_head ap_node;
+    bool is_ap;
 };
 
 /* Virtual WiFi Wiphy Private Data */
@@ -111,5 +118,9 @@ static int virt_if_delete(struct virt_net_dev_priv* priv);
 
 /* Wiphy Configuration Options */
 static struct wiphy* wiphy_add(void);
+
+/* Access Point Options */
+static int ap_init(struct wiphy*, struct net_device* dev, struct cfg80211_ap_settings*);
+static int ap_terminate(struct wiphy*, struct net_device*, unsigned int);
 
 #endif /* _VIRT_NET_DRIVER_H_ */
