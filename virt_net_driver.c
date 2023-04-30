@@ -411,7 +411,8 @@ static int virt_net_driver_cfg80211_connect(struct wiphy *wiphy, struct net_devi
         printk(KERN_INFO "step: %d\n", i);
         if (memcpy(ap->ssid, params->ssid, params->ssid_len)) {
             printk(KERN_INFO "we got here 1\n");
-            cfg80211_connect_result(netdev_priv_data->netdev, NULL, NULL, 0, NULL, 0, WLAN_STATUS_SUCCESS, GFP_KERNEL);
+            netdev_priv_data->state = VIRT_WIFI_CONNECTED;
+            cfg80211_connect_result(netdev_priv_data->netdev, ap->bssid, NULL, 0, NULL, 0, WLAN_STATUS_SUCCESS, GFP_KERNEL);
 
             printk(KERN_INFO "we got here 2\n");
             netdev_priv_data->ssid_len = params->ssid_len;
@@ -422,13 +423,17 @@ static int virt_net_driver_cfg80211_connect(struct wiphy *wiphy, struct net_devi
 
             printk(KERN_INFO "we got here 5\n");
             mutex_lock(&ap->mtx);
+            printk(KERN_INFO "we got here 6\n");
             list_add_tail(&netdev_priv_data->bss_list, &ap->bss_list);
+            printk(KERN_INFO "we got here 7\n");
             mutex_unlock(&ap->mtx);
             mutex_unlock(&netdev_priv_data->mtx);
             return 0;
         }
         i++;
     }
+
+    cfg80211_connect_timeout(netdev_priv_data->netdev, NULL, NULL, 0, GFP_KERNEL, 100);
 
 
 
@@ -466,7 +471,24 @@ static int virt_net_driver_cfg80211_connect(struct wiphy *wiphy, struct net_devi
     // cfg80211_connect_result(dev, params->bssid, params->ie, params->ie_len, NULL, 0, WLAN_STATUS_SUCCESS, GFP_KERNEL);
     // memcpy((void*)netdev_priv_data->ssid_len, (void*)params->ssid_len, sizeof(size_t));
     // memcpy(netdev_priv_data->ssid, params->ssid, params->ssid_len);
+    mutex_unlock(&netdev_priv_data->mtx);
     printk(KERN_ERR "no ap found\n");
+    return 0;
+}
+
+static int virt_get_station(struct wiphy* wiphy, struct net_device* dev, const u8* net_addr, struct station_info* info)
+{
+    struct virt_net_dev_priv* priv = netdev_priv(dev);
+    if(memcmp(net_addr, priv->bssid, ETH_ALEN)) {
+        printk(KERN_ERR "%s: no network device %s %s\n", VIRT_NET_DRIVER_NAME, net_addr, priv->bssid);
+        return -ENONET;
+    }
+    info->filled = BIT_ULL(NL80211_STA_INFO_TX_PACKETS) | BIT_ULL(NL80211_STA_INFO_RX_PACKETS) | BIT_ULL(NL80211_STA_INFO_TX_FAILED) | BIT_ULL(NL80211_STA_INFO_TX_BYTES) | BIT_ULL(NL80211_STA_INFO_RX_BYTES);
+    info->tx_packets = 1;
+    info->rx_packets = 1;
+    info->tx_failed = 1;
+    info->tx_bytes = 1;
+    info->rx_bytes = 1;
     return 0;
 }
 
@@ -553,8 +575,8 @@ static const struct net_device_ops virt_net_dev_ops = {
     .ndo_open = virt_net_driver_open,
     .ndo_stop = virt_net_driver_stop,
     .ndo_start_xmit = virt_net_driver_start_xmit,
-    .ndo_set_mac_address = virt_net_driver_set_mac_address,
-    .ndo_do_ioctl = virt_net_driver_do_ioctl,
+    // .ndo_set_mac_address = virt_net_driver_set_mac_address,
+    // .ndo_do_ioctl = virt_net_driver_do_ioctl,
 };
 
 static const struct ethtool_ops virt_net_ethtool_ops = {
@@ -594,13 +616,14 @@ static int virt_if_add(struct wiphy* wiphy, int identifier)
     }
 
     /* Getting priv values */
-    priv = netdev_priv(virt_net_dev);
+    priv = (struct virt_net_dev_priv*) netdev_priv(virt_net_dev);
 
     /* Setting private values */
     priv->netdev = virt_net_dev;
 
     /* Wireless_dev values */
     priv->wdev.wiphy = wiphy;
+    priv->wdev.netdev = virt_net_dev;
     // STA by default
     priv->wdev.iftype = NL80211_IFTYPE_STATION;
     priv->netdev->ieee80211_ptr = &priv->wdev;
@@ -608,14 +631,13 @@ static int virt_if_add(struct wiphy* wiphy, int identifier)
     priv->netdev->features |= NETIF_F_HW_CSUM;
 
 	/* Set the device's name */
-    char name[ETH_ALEN];
-    snprintf(name, ETH_ALEN, "%s%d", VIRT_NET_INTF_NAME, identifier);
-    strlcpy(virt_net_dev->name, name, sizeof(virt_net_dev->name));
-    memcpy((void*) priv->netdev->dev_addr, name, ETH_ALEN);
+    char hw_name[ETH_ALEN + 1] = {0};
+    snprintf(hw_name + 1, ETH_ALEN, "%s%d", VIRT_NET_INTF_NAME, identifier);
+    eth_hw_addr_set(priv->netdev, hw_name);
 
     /* Assign ops */
     virt_net_dev->netdev_ops = &virt_net_dev_ops;
-    virt_net_dev->ethtool_ops = &virt_net_ethtool_ops;
+    // virt_net_dev->ethtool_ops = &virt_net_ethtool_ops;
 
     /* Register device */ 
     error = register_netdev(priv->netdev);
@@ -627,14 +649,12 @@ static int virt_if_add(struct wiphy* wiphy, int identifier)
         return -ENOMEM;
     }
 
-    /* init mutex */
-    mutex_init(&priv->mtx);
-
-    /* init other values) */
-    // the device starts as "not connected" so these values are 0
     memset(priv->bssid, 0, ETH_ALEN);
     memset(priv->ssid, 0, IEEE80211_MAX_SSID_LEN);
-
+    priv->state = VIRT_WIFI_DISCONNECTED;
+    priv->ap = NULL;
+    /* init mutex */
+    mutex_init(&priv->mtx);
 
     /* init buffers */
     init_virt_hw_resource(priv->netdev);
@@ -712,6 +732,7 @@ static struct cfg80211_ops wifi_dev_ops = {
     //.scan = virt_net_driver_cfg80211_scan,
     .connect = virt_net_driver_cfg80211_connect,
     .disconnect = virt_net_driver_cfg80211_disconnect,
+    .get_station = virt_get_station,
     .start_ap = ap_init,
     .stop_ap = ap_terminate,
 };
@@ -767,10 +788,8 @@ static struct wiphy* wiphy_add(void)
     int error = 0;
     struct wiphy* wiphy = NULL;
 
-    // setting default wiphy options 
-
     // allocate new wiphy structure
-    wiphy = wiphy_new(&wifi_dev_ops, 0);
+    wiphy = wiphy_new_nm(&wifi_dev_ops, 0, NULL);
     if (!wiphy) {
         printk(KERN_ERR "%s: Failed to allocate new wiphy device\n", VIRT_NET_DRIVER_NAME);
         return NULL;
@@ -808,7 +827,7 @@ static int ap_init(struct wiphy* wiphy, struct net_device* dev, struct cfg80211_
     priv->ssid_len = ap_settings->ssid_len;
     memcpy(priv->ssid, ap_settings->ssid, ap_settings->ssid_len);
     memcpy(priv->bssid, priv->netdev->dev_addr, ETH_ALEN);
-    printk(KERN_INFO "%s: bssid changed: %d\n", priv->bssid);
+    printk(KERN_INFO "%s: bssid changed: %x\n", priv->bssid);
 
     // add to ap list
     list_add_tail(&priv->ap_node, &context->ap_list);
@@ -818,7 +837,6 @@ static int ap_init(struct wiphy* wiphy, struct net_device* dev, struct cfg80211_
 
     priv->is_ap = true;
 
-    inform_bss(priv);
     return 0;
 }
 

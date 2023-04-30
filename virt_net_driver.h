@@ -106,6 +106,7 @@ static unsigned int simulate_assoc_delay(void);
 static unsigned int simulate_disassoc_delay(void);
 static void virt_net_disconnect(struct virt_net_dev_priv *priv);
 static int virt_wifi_send_assoc(struct net_device *dev, struct cfg80211_connect_params *params);
+static int virt_get_station(struct wiphy* wiphy, struct net_device* dev, const u8* net_addr, struct station_info* info);
 
 /* Wireless Operations */
 static int virt_net_driver_cfg80211_scan(struct wiphy *wiphy, struct cfg80211_scan_request *request);
