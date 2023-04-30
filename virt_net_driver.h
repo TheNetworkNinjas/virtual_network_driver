@@ -61,6 +61,7 @@ struct virt_net_dev_priv {
     struct list_head bss_list;
     // AP node for global AP list
     struct list_head ap_node;
+    struct virt_net_dev_priv* ap;
     bool is_ap;
 };
 
@@ -110,6 +111,7 @@ static int virt_wifi_send_assoc(struct net_device *dev, struct cfg80211_connect_
 static int virt_net_driver_cfg80211_scan(struct wiphy *wiphy, struct cfg80211_scan_request *request);
 static int virt_net_driver_cfg80211_connect(struct wiphy *wiphy, struct net_device *dev, struct cfg80211_connect_params *params);
 static int virt_net_driver_cfg80211_disconnect(struct wiphy *wiphy, struct net_device *dev, u16 reason_code);
+static void inform_bss(struct virt_net_dev_priv* priv);
 
 /* Interface Configuration Operatins */
 static int virt_if_add(struct wiphy* wiphy, int identifier);

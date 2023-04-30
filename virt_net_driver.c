@@ -289,13 +289,42 @@ static int virt_net_driver_do_ioctl(struct net_device *dev, struct ifreq *ifr, i
     return ret;
 }
 
+static void inform_bss(struct virt_net_dev_priv* priv)
+{
+    printk(KERN_INFO "informing bss\n");
+    /* Loop through all APs known in context.  There should only be 1 for our purposes */
+    struct virt_net_dev_priv* current_ap;
+    list_for_each_entry(current_ap, &context->ap_list, ap_node)
+    {
+        printk(KERN_INFO "%s: doing info stuff\n", VIRT_NET_DRIVER_NAME);
+        struct cfg80211_bss* bss = NULL;
+        struct cfg80211_inform_bss inform_bss_data = {
+            .signal = (s32) -50,
+            .chan = &current_ap->wdev.wiphy->bands[NL80211_BAND_2GHZ]->channels[0],
+            .scan_width = NL80211_BSS_CHAN_WIDTH_20,
+        };
+
+        u8 *ie = kmalloc(current_ap->ssid_len + 2, GFP_KERNEL);
+        ie[0] = WLAN_EID_SSID;
+        ie[1] = current_ap->ssid_len;
+        memcpy(ie + 2, current_ap->ssid, current_ap->ssid_len);
+
+        u64 tsf = div_u64(ktime_get_boottime_ns(), 1000);
+        bss = cfg80211_inform_bss_data (priv->wdev.wiphy, &inform_bss_data, CFG80211_BSS_FTYPE_UNKNOWN, current_ap->bssid, tsf, WLAN_CAPABILITY_ESS, 100, ie, current_ap->ssid_len + 2, GFP_KERNEL);
+
+        cfg80211_put_bss(priv->wdev.wiphy, bss);
+        kfree(ie);
+    }
+}
+
 static int virt_net_driver_cfg80211_scan(struct wiphy *wiphy, struct cfg80211_scan_request *request)
 {
     int i;
 
     printk(KERN_INFO "Virtual Wi-Fi scan initiated\n");
-
-    
+    struct virt_net_dev_priv* priv = NULL;
+    priv = wiphy_priv(wiphy);
+    inform_bss(priv);
 
     /* Simulate a Wi-Fi scan with some fake access points */
     // for (i = 0; i < request->n_ssids; i++) {
@@ -329,7 +358,7 @@ static int virt_net_driver_cfg80211_scan(struct wiphy *wiphy, struct cfg80211_sc
     // }
 
     /* Notify the cfg80211 subsystem that the scan is complete */
-    //cfg80211_scan_done(request, false);
+    cfg80211_scan_done(request, false);
 
     printk(KERN_INFO "Virtual Wi-Fi scan complete\n");
 
@@ -366,40 +395,78 @@ static int virt_net_driver_cfg80211_connect(struct wiphy *wiphy, struct net_devi
     struct cfg80211_bss *bss;
     struct ieee80211_channel *channel;
     int err;
+    int i = 0;
 
-    if (!params->bssid || !params->ssid) {
+    
+    
+    printk(KERN_INFO "we got here\n");
+    if (!params->ssid) {
         return -EINVAL;
     }
 
-    mutex_lock(&priv->scan_mutex);
-    bss = cfg80211_get_bss(wiphy, NULL, params->bssid, params->ssid, params->ssid_len, IEEE80211_BSS_TYPE_ANY, IEEE80211_PRIVACY_ANY);
-    mutex_unlock(&priv->scan_mutex);
+    mutex_lock(&netdev_priv_data->mtx);
+    struct virt_net_dev_priv* ap = NULL;
+    list_for_each_entry(ap, &context->ap_list, ap_node)
+    {
+        printk(KERN_INFO "step: %d\n", i);
+        if (memcpy(ap->ssid, params->ssid, params->ssid_len)) {
+            printk(KERN_INFO "we got here 1\n");
+            cfg80211_connect_result(netdev_priv_data->netdev, NULL, NULL, 0, NULL, 0, WLAN_STATUS_SUCCESS, GFP_KERNEL);
 
-    if (!bss) {
-        return -ENOENT;
+            printk(KERN_INFO "we got here 2\n");
+            netdev_priv_data->ssid_len = params->ssid_len;
+            printk(KERN_INFO "we got here 3\n");
+            memcpy(netdev_priv_data->ssid, params->ssid, params->ssid_len);
+            printk(KERN_INFO "we got here 4\n");
+            memcpy(netdev_priv_data->bssid, ap->bssid, ETH_ALEN);
+
+            printk(KERN_INFO "we got here 5\n");
+            mutex_lock(&ap->mtx);
+            list_add_tail(&netdev_priv_data->bss_list, &ap->bss_list);
+            mutex_unlock(&ap->mtx);
+            mutex_unlock(&netdev_priv_data->mtx);
+            return 0;
+        }
+        i++;
     }
 
-    channel = bss->channel;
-    if (channel->flags & IEEE80211_CHAN_DISABLED) {
-        cfg80211_put_bss(wiphy, bss);
-        return -EINVAL;
-    }
 
-    netdev_priv_data->assoc_bss = bss;
-    netdev_priv_data->channel = channel;
-    netdev_priv_data->state = VIRT_WIFI_ASSOCIATING;
 
-    err = virt_wifi_send_assoc(dev, params);
-    if (err) {
-        cfg80211_put_bss(wiphy, bss);
-        netdev_priv_data->assoc_bss = NULL;
-        netdev_priv_data->channel = NULL;
-        netdev_priv_data->state = VIRT_WIFI_DISCONNECTED;
-        return err;
-    }
-
-    cfg80211_connect_result(dev, params->bssid, params->ie, params->ie_len, NULL, 0, WLAN_STATUS_SUCCESS, GFP_KERNEL);
-
+    // mutex_lock(&priv->scan_mutex);
+    // bss = cfg80211_get_bss(wiphy, NULL, params->bssid, params->ssid, params->ssid_len, IEEE80211_BSS_TYPE_ANY, IEEE80211_PRIVACY_ANY);
+    // mutex_unlock(&priv->scan_mutex);
+    // printk(KERN_INFO "we got here\n");
+    //
+    // if (!bss) {
+    //     printk(KERN_INFO "error\n");
+    //     return -ENOENT;
+    // }
+    //
+    // printk(KERN_INFO "we got here\n");
+    // channel = bss->channel;
+    // if (channel->flags & IEEE80211_CHAN_DISABLED) {
+    //     cfg80211_put_bss(wiphy, bss);
+    //     return -EINVAL;
+    // }
+    // printk(KERN_INFO "we got here\n");
+    //
+    // netdev_priv_data->assoc_bss = bss;
+    // netdev_priv_data->channel = channel;
+    // netdev_priv_data->state = VIRT_WIFI_ASSOCIATING;
+    //
+    // err = virt_wifi_send_assoc(dev, params);
+    // if (err) {
+    //     cfg80211_put_bss(wiphy, bss);
+    //     netdev_priv_data->assoc_bss = NULL;
+    //     netdev_priv_data->channel = NULL;
+    //     netdev_priv_data->state = VIRT_WIFI_DISCONNECTED;
+    //     return err;
+    // }
+    //
+    // cfg80211_connect_result(dev, params->bssid, params->ie, params->ie_len, NULL, 0, WLAN_STATUS_SUCCESS, GFP_KERNEL);
+    // memcpy((void*)netdev_priv_data->ssid_len, (void*)params->ssid_len, sizeof(size_t));
+    // memcpy(netdev_priv_data->ssid, params->ssid, params->ssid_len);
+    printk(KERN_ERR "no ap found\n");
     return 0;
 }
 
@@ -642,7 +709,7 @@ static int virt_if_delete(struct virt_net_dev_priv* priv)
  */
 static struct cfg80211_ops wifi_dev_ops = {
     .change_virtual_intf = virt_if_configure,
-    .scan = virt_net_driver_cfg80211_scan,
+    //.scan = virt_net_driver_cfg80211_scan,
     .connect = virt_net_driver_cfg80211_connect,
     .disconnect = virt_net_driver_cfg80211_disconnect,
     .start_ap = ap_init,
@@ -741,6 +808,7 @@ static int ap_init(struct wiphy* wiphy, struct net_device* dev, struct cfg80211_
     priv->ssid_len = ap_settings->ssid_len;
     memcpy(priv->ssid, ap_settings->ssid, ap_settings->ssid_len);
     memcpy(priv->bssid, priv->netdev->dev_addr, ETH_ALEN);
+    printk(KERN_INFO "%s: bssid changed: %d\n", priv->bssid);
 
     // add to ap list
     list_add_tail(&priv->ap_node, &context->ap_list);
@@ -749,6 +817,8 @@ static int ap_init(struct wiphy* wiphy, struct net_device* dev, struct cfg80211_
     INIT_LIST_HEAD(&priv->bss_list);
 
     priv->is_ap = true;
+
+    inform_bss(priv);
     return 0;
 }
 
