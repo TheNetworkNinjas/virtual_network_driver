@@ -202,6 +202,8 @@ Remove the virtual network driver module:
 sudo rmmod virt_net_driver
 ```
 
+Test packet transfer functionality. We did not implement packet transfers between APs and STAs, but packet transfer between two STAs on the same namespace do work.
+
 Re-insert the module:
 
 ```bash
