@@ -389,7 +389,6 @@ static int virt_net_driver_cfg80211_connect(struct wiphy *wiphy, struct net_devi
 
     printk(KERN_INFO "%s: Starting connection...\n", VIRT_NET_DRIVER_NAME);
     struct virt_net_dev_priv *priv = get_wiphy_priv(wiphy)->wiphy_priv;
-    size_t ssid_len = params->ssid_len;
 
     printk(KERN_INFO "%s: Init connect 1\n", VIRT_NET_DRIVER_NAME);
 
@@ -403,14 +402,15 @@ static int virt_net_driver_cfg80211_connect(struct wiphy *wiphy, struct net_devi
     }
     printk(KERN_INFO "%s: Init connect 3\n", VIRT_NET_DRIVER_NAME);
 
-    memcpy(priv->req_ssid, params->ssid, ssid_len);
-    priv->ssid[ssid_len] = 0;
+    memcpy(priv->req_ssid, params->ssid, params->ssid_len);
+    printk(KERN_INFO "%s: Init connect 4\n", VIRT_NET_DRIVER_NAME);
+    priv->ssid[params->ssid_len] = 0;
     priv->connect_request = params;
 
-    printk(KERN_INFO "%s: Init connect 4\n", VIRT_NET_DRIVER_NAME);
+    printk(KERN_INFO "%s: Init connect 5\n", VIRT_NET_DRIVER_NAME);
     mutex_unlock(&priv->mtx);
 
-    printk(KERN_INFO "%s: Init connect 5\n", VIRT_NET_DRIVER_NAME);
+    printk(KERN_INFO "%s: Init connect 6\n", VIRT_NET_DRIVER_NAME);
     if (!schedule_work(&priv->ws_connect)) {
         return -EBUSY;
     }
@@ -420,66 +420,81 @@ static int virt_net_driver_cfg80211_connect(struct wiphy *wiphy, struct net_devi
 
 static void connect_routine(struct work_struct* work)
 {
+    printk(KERN_INFO "%s: CONNECTION ROUTINE 1\n", VIRT_NET_DRIVER_NAME);
     struct virt_net_dev_priv* priv = container_of(work, struct virt_net_dev_priv, ws_connect);
     if (mutex_lock_interruptible(&priv->mtx)) {
         return;
     }
 
     struct virt_net_dev_priv* ap = NULL;
+    int i = 0;
     list_for_each_entry(ap, &context->ap_list, ap_node)
     {
+        printk(KERN_INFO "%s: Looping %d\n", VIRT_NET_DRIVER_NAME, i);
         if (memcpy(ap->ssid, priv->req_ssid, sizeof(ap->ssid))) {
-            if (mutex_lock_interruptible(&ap->mtx)) {
-                return;
-            }
+            printk(KERN_INFO "%s: CONNECTION ROUTINE 2\n", VIRT_NET_DRIVER_NAME);
+
+            printk(KERN_INFO "%s: CONNECTION ROUTINE 3\n", VIRT_NET_DRIVER_NAME);
 
             inform_bss(priv);
+            printk(KERN_INFO "%s: CONNECTION ROUTINE 4\n", VIRT_NET_DRIVER_NAME);
             cfg80211_connect_bss(priv->netdev, NULL, NULL, NULL, 0, NULL, 0, WLAN_STATUS_SUCCESS, GFP_KERNEL, NL80211_TIMEOUT_UNSPECIFIED);
+            printk(KERN_INFO "%s: CONNECTION ROUTINE 5\n", VIRT_NET_DRIVER_NAME);
 
-            printk(KERN_INFO "we got here 1\n");
             priv->state = VIRT_WIFI_CONNECTED;
-            // cfg80211_connect_result(priv->netdev, ap->bssid, NULL, 0, NULL, 0, WLAN_STATUS_SUCCESS, GFP_KERNEL);
-
-            printk(KERN_INFO "we got here 2\n");
-            priv->ssid_len = priv->connect_request->ssid_len;
-            printk(KERN_INFO "we got here 3\n");
-            memcpy(priv->ssid, priv->connect_request->ssid, priv->connect_request->ssid_len);
-            printk(KERN_INFO "we got here 4\n");
+            // // cfg80211_connect_result(priv->netdev, ap->bssid, NULL, 0, NULL, 0, WLAN_STATUS_SUCCESS, GFP_KERNEL);
+            //
+            memcpy(priv->ssid, priv->req_ssid, priv->ssid_len);
+            printk(KERN_INFO "%s: CONNECTION ROUTINE 6\n", VIRT_NET_DRIVER_NAME);
             memcpy(priv->bssid, ap->bssid, ETH_ALEN);
+            printk(KERN_INFO "%s: CONNECTION ROUTINE 7\n", VIRT_NET_DRIVER_NAME);
 
-            printk(KERN_INFO "we got here 5\n");
-            mutex_lock(&ap->mtx);
-            printk(KERN_INFO "we got here 6\n");
+            if (mutex_lock_interruptible(&ap->mtx)) {
+                mutex_unlock(&priv->mtx);
+                return;
+            }
+            printk(KERN_INFO "%s: CONNECTION ROUTINE 8\n", VIRT_NET_DRIVER_NAME);
             list_add_tail(&priv->bss_list, &ap->bss_list);
-            printk(KERN_INFO "we got here 7\n");
-
-            priv->req_ssid[0] = 0;
-
+            printk(KERN_INFO "%s: CONNECTION ROUTINE 9\n", VIRT_NET_DRIVER_NAME);
             mutex_unlock(&ap->mtx);
             mutex_unlock(&priv->mtx);
+            printk(KERN_INFO "%s: CONNECTION ROUTINE 10\n", VIRT_NET_DRIVER_NAME);
+            return;
         }
     }
 
     mutex_unlock(&priv->mtx);
-    cfg80211_connect_timeout(priv->netdev, NULL, NULL, 0, GFP_KERNEL, NL80211_TIMEOUT_SCAN);
+    printk(KERN_INFO "%s: CONNECTION ROUTINE ABOUT TO TIMEOUT\n", VIRT_NET_DRIVER_NAME);
+    // cfg80211_connect_timeout(priv->netdev, NULL, NULL, 0, GFP_KERNEL, NL80211_TIMEOUT_SCAN);
 
 }
 
+/* get information about an interface on the network */
+/* does not give real information back, but dummy info */
 static int virt_get_station(struct wiphy* wiphy, struct net_device* dev, const u8* net_addr, struct station_info* info)
 {
     struct virt_net_dev_priv* priv = netdev_priv(dev);
-    if(memcmp(net_addr, priv->bssid, ETH_ALEN)) {
-        printk(KERN_ERR "%s: no network device %s %s\n", VIRT_NET_DRIVER_NAME, net_addr, priv->bssid);
-        return -ENONET;
+    struct virt_net_dev_priv* iterator = NULL;
+
+    // iterate over all known interfaces
+    list_for_each_entry(iterator, &context->if_list, if_node)
+    {
+        // if one matches the requested mac address, return dummy info
+        if (!memcmp(net_addr, iterator->netdev->dev_addr, ETH_ALEN)) {
+            info->filled = BIT_ULL(NL80211_STA_INFO_TX_PACKETS) | BIT_ULL(NL80211_STA_INFO_RX_PACKETS) | BIT_ULL(NL80211_STA_INFO_TX_FAILED) | BIT_ULL(NL80211_STA_INFO_TX_BYTES) | BIT_ULL(NL80211_STA_INFO_RX_BYTES);
+            info->tx_packets = 1;
+            info->rx_packets = 1;
+            info->tx_failed = 1;
+            info->tx_bytes = 1;
+            info->rx_bytes = 1;
+            return 0;
+        }
     }
-    info->filled = BIT_ULL(NL80211_STA_INFO_TX_PACKETS) | BIT_ULL(NL80211_STA_INFO_RX_PACKETS) | BIT_ULL(NL80211_STA_INFO_TX_FAILED) | BIT_ULL(NL80211_STA_INFO_TX_BYTES) | BIT_ULL(NL80211_STA_INFO_RX_BYTES);
-    info->tx_packets = 1;
-    info->rx_packets = 1;
-    info->tx_failed = 1;
-    info->tx_bytes = 1;
-    info->rx_bytes = 1;
-    return 0;
+
+    // if none match requested mac address, return (machine is not on network)
+    return -ENONET;
 }
+
 
 static unsigned int simulate_disassoc_delay(void) {
     /* Helper function to simulate a random disassociation delay */
