@@ -15,8 +15,8 @@ MODULE_AUTHOR("Lydia Sollis");
 MODULE_DESCRIPTION("Virtual network driver for Linux");
 MODULE_VERSION("0.01");
 
-static struct net_device *virt_net_dev;
-static struct virt_adapter_context *context;
+static struct net_device *virt_net_dev; // pointer to network device struct for virtual network device
+static struct virt_adapter_context *context; // pointer to context for virtual adapter
 
 /*
  * Function: get_wiphy_priv
@@ -177,6 +177,7 @@ static int virt_net_driver_stop(struct net_device *dev)
  */
 static void virt_net_tx_complete(struct net_device *dev, struct sk_buff *skb)
 {
+    /* update network device statistics */
     dev->stats.tx_packets++;
     dev->stats.tx_bytes += skb->len;
 
@@ -419,14 +420,17 @@ static void inform_bss(struct virt_net_dev_priv* priv)
             .scan_width = NL80211_BSS_CHAN_WIDTH_20,
         };
 
+        /* allocate memory for and create an information element for the SSID of the current access point */
         u8 *ie = kmalloc(current_ap->ssid_len + 2, GFP_KERNEL);
         ie[0] = WLAN_EID_SSID;
         ie[1] = current_ap->ssid_len;
         memcpy(ie + 2, current_ap->ssid, current_ap->ssid_len);
 
+        /* calculate time stamp of the frame (tsf) for the bss info element; inform the BSS of the specified access point */
         u64 tsf = div_u64(ktime_get_boottime_ns(), 1000);
         bss = cfg80211_inform_bss_data (priv->wdev.wiphy, &inform_bss_data, CFG80211_BSS_FTYPE_UNKNOWN, current_ap->bssid, tsf, WLAN_CAPABILITY_ESS, 100, ie, sizeof(ie), GFP_KERNEL);
 
+        /* inform cfg80211 about the BSS that has been found, then free allocated memory */
         cfg80211_put_bss(priv->wdev.wiphy, bss);
         kfree(ie);
     }
@@ -442,21 +446,28 @@ static void inform_bss(struct virt_net_dev_priv* priv)
  */
 static int virt_net_driver_cfg80211_scan(struct wiphy *wiphy, struct cfg80211_scan_request *request)
 {
+
     printk(KERN_INFO "Virtual Wi-Fi scan initiated\n");
     struct virt_net_dev_priv* priv = get_wiphy_priv(wiphy)->wiphy_priv;
+
+    /* Attempts to acquire the mutex lock to prevent simultaneous access to the shared data */
     if(mutex_lock_interruptible(&priv->mtx)) {
         return -ERESTARTSYS;
     }
 
+    /* If a scan is already in progress, unlock the mutex and return an error */
     if (priv->scan_request != NULL) {
         mutex_unlock(&priv->mtx);
         return -EBUSY;
     }
 
+    /* Set the new scan request */
     priv->scan_request = request;
 
+    /* Unlock the mutex */
     mutex_unlock(&priv->mtx);
 
+    /* Schedule the scan work and return success or an error if the work was already scheduled */
     if (!schedule_work(&priv->ws_scan)) {
         return -EBUSY;
     }
@@ -472,16 +483,20 @@ static int virt_net_driver_cfg80211_scan(struct wiphy *wiphy, struct cfg80211_sc
  */
 static void scan_routine(struct work_struct* work)
 {
+    /* Get the virtual network device from the work struct */
     struct virt_net_dev_priv* priv = container_of(work, struct virt_net_dev_priv, ws_scan);
-    struct cfg80211_scan_info info = {
+    struct cfg80211_scan_info info = { // create and initialize struct to store scan information
         .aborted = false,
     };
+    /* Wait for 100ms to allow for any scan requests to complete */
     msleep(100);
+    /* Inform AP about the scan */
     inform_bss(priv);
-
+    /* Lock mutex to prevent multiple scans at once */
     if (mutex_lock_interruptible(&priv->mtx)) {
         return;
     }
+    /* Call cfg80211_scan_done to indicate scan is complete, set scan_reqeust to NULL to allow future scans, unlock mutex */
     cfg80211_scan_done(priv->scan_request, &info);
     priv->scan_request = NULL;
     mutex_unlock(&priv->mtx);
@@ -539,16 +554,19 @@ static int virt_net_driver_cfg80211_connect(struct wiphy *wiphy, struct net_devi
 
     printk(KERN_INFO "%s: Init connect 1\n", VIRT_NET_DRIVER_NAME);
 
+    /* check if SSID is provided in connection parameters */
     if(params->ssid == NULL) {
         return -EBUSY;
     }
     printk(KERN_INFO "%s: Init connect 2\n", VIRT_NET_DRIVER_NAME);
 
+    /* Acquire lock on the device's mutex to ensure exclusive access during connection process */
     if(mutex_lock_interruptible(&priv->mtx)) {
         return -ERESTARTSYS;
     }
     printk(KERN_INFO "%s: Init connect 3\n", VIRT_NET_DRIVER_NAME);
 
+    /* Copy SSID into device's private struct, set null terminator for SSID, save connection request params */
     memcpy(priv->req_ssid, params->ssid, params->ssid_len);
     printk(KERN_INFO "%s: Init connect 4\n", VIRT_NET_DRIVER_NAME);
     priv->ssid[params->ssid_len] = 0;
@@ -557,6 +575,7 @@ static int virt_net_driver_cfg80211_connect(struct wiphy *wiphy, struct net_devi
     printk(KERN_INFO "%s: Init connect 5\n", VIRT_NET_DRIVER_NAME);
     mutex_unlock(&priv->mtx);
 
+    /* Schedule work to handle connection process */
     printk(KERN_INFO "%s: Init connect 6\n", VIRT_NET_DRIVER_NAME);
     if (!schedule_work(&priv->ws_connect)) {
         return -EBUSY;
@@ -577,6 +596,7 @@ static int virt_net_driver_cfg80211_connect(struct wiphy *wiphy, struct net_devi
 static void connect_routine(struct work_struct* work)
 {
     printk(KERN_INFO "%s: CONNECTION ROUTINE 1\n", VIRT_NET_DRIVER_NAME);
+    // Get the virtual network device structure from the work queue item
     struct virt_net_dev_priv* priv = container_of(work, struct virt_net_dev_priv, ws_connect);
     if (mutex_lock_interruptible(&priv->mtx)) {
         return;
@@ -584,22 +604,25 @@ static void connect_routine(struct work_struct* work)
 
     struct virt_net_dev_priv* ap = NULL;
     int i = 0;
+    /* Loop through all APs known in context */
     list_for_each_entry(ap, &context->ap_list, ap_node)
     {
         printk(KERN_INFO "%s: Looping %d\n", VIRT_NET_DRIVER_NAME, i);
+        /* Check if the current AP's SSID matches the requested SSID */
         if (!memcmp(ap->ssid, priv->req_ssid, sizeof(priv->req_ssid))) {
             printk(KERN_INFO "%s: CONNECTION ROUTINE 2\n", VIRT_NET_DRIVER_NAME);
 
             printk(KERN_INFO "%s: CONNECTION ROUTINE 3\n", VIRT_NET_DRIVER_NAME);
-
+            /* inform bss about the AP */
             inform_bss(priv);
             printk(KERN_INFO "%s: CONNECTION ROUTINE 4\n", VIRT_NET_DRIVER_NAME);
+            /* connect to the AP */
             cfg80211_connect_bss(priv->netdev, NULL, NULL, NULL, 0, NULL, 0, WLAN_STATUS_SUCCESS, GFP_KERNEL, NL80211_TIMEOUT_UNSPECIFIED);
             printk(KERN_INFO "%s: CONNECTION ROUTINE 5\n", VIRT_NET_DRIVER_NAME);
 
+            /* Update the virtual network device's state to indicate that it is connected */
             priv->state = VIRT_WIFI_CONNECTED;
             // // cfg80211_connect_result(priv->netdev, ap->bssid, NULL, 0, NULL, 0, WLAN_STATUS_SUCCESS, GFP_KERNEL);
-            //
             memcpy(priv->ssid, priv->req_ssid, priv->ssid_len);
             printk(KERN_INFO "%s: CONNECTION ROUTINE 6\n", VIRT_NET_DRIVER_NAME);
             memcpy(priv->bssid, ap->bssid, ETH_ALEN);
@@ -696,11 +719,13 @@ static void virt_net_disconnect(struct virt_net_dev_priv *priv) {
     /* Update the state to reflect successful disassociation */
     priv->state = VIRT_WIFI_DISCONNECTED;
 
+    /* if there is an associated bss, release it */
     if (priv->assoc_bss) {
         cfg80211_put_bss(priv->wiphy, priv->assoc_bss);
         priv->assoc_bss = NULL;
     }
 
+    /* reset the channel to null */
     priv->channel = NULL;
 }
 
@@ -716,13 +741,16 @@ static void virt_net_disconnect(struct virt_net_dev_priv *priv) {
  */
 static int virt_net_driver_cfg80211_disconnect(struct wiphy *wiphy, struct net_device *dev, u16 reason_code)
 {
+    /* Get the private data associated with the wiphy structure */
     struct virt_net_dev_priv* priv = get_wiphy_priv(wiphy)->wiphy_priv;
     if (mutex_lock_interruptible(&priv->mtx)) {
         return -ERESTARTSYS;
     }
 
+    /* save reason for disconnection in the private data */
     priv->disconnect_code = reason_code;
 
+    /* release lock on mutex and schedule work to perform the disconnection */
     mutex_unlock(&priv->mtx);
     if (!schedule_work(&priv->ws_disconnect)) {
         return -EBUSY;
@@ -744,6 +772,7 @@ static void disconnect_routine(struct work_struct* work)
         return;
     }
 
+    /* notify the kernel about the disconnection event, reset the disconnect code */
     cfg80211_disconnected(priv->netdev, priv->disconnect_code, NULL, 0, true, GFP_KERNEL);
     priv->disconnect_code = 0;
     mutex_unlock(&priv->mtx);
