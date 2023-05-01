@@ -41,9 +41,11 @@ struct virt_net_dev_priv {
     struct net_device *netdev;
     struct wiphy *wiphy;
     struct cfg80211_scan_request *scan_request;
-    struct cfg80211_connect_params *connect_params;
-    struct work_struct scan_work;
+    struct cfg80211_connect_params *connect_request;
     struct work_struct connect_work;
+    struct work_struct ws_scan;
+    struct work_struct ws_connect;
+    struct work_struct ws_disconnect;
     struct wireless_dev wdev;
     struct delayed_work work;
     struct virt_fifo tx_fifo;
@@ -55,6 +57,7 @@ struct virt_net_dev_priv {
     struct ieee80211_channel *channel;
     enum virt_wifi_state state;
     u8 ssid[IEEE80211_MAX_SSID_LEN];
+    u8 req_ssid[IEEE80211_MAX_SSID_LEN];
     size_t ssid_len;
     u8 bssid[ETH_ALEN];
     // list of all interfaces for a bss as head
@@ -63,11 +66,14 @@ struct virt_net_dev_priv {
     struct list_head ap_node;
     struct virt_net_dev_priv* ap;
     bool is_ap;
+    u16 disconnect_code;
 };
 
 /* Virtual WiFi Wiphy Private Data */
-struct virt_wifi_wiphy_priv {
-    struct mutex scan_mutex;
+struct virt_wiphy_priv {
+    struct virt_net_dev_priv* wiphy_priv;
+
+    //struct mutex scan_mutex;
 };
 
 /* Program context */
