@@ -431,7 +431,7 @@ static void connect_routine(struct work_struct* work)
     list_for_each_entry(ap, &context->ap_list, ap_node)
     {
         printk(KERN_INFO "%s: Looping %d\n", VIRT_NET_DRIVER_NAME, i);
-        if (memcpy(ap->ssid, priv->req_ssid, sizeof(ap->ssid))) {
+        if (!memcmp(ap->ssid, priv->req_ssid, sizeof(priv->req_ssid))) {
             printk(KERN_INFO "%s: CONNECTION ROUTINE 2\n", VIRT_NET_DRIVER_NAME);
 
             printk(KERN_INFO "%s: CONNECTION ROUTINE 3\n", VIRT_NET_DRIVER_NAME);
