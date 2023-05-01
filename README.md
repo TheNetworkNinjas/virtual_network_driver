@@ -135,7 +135,7 @@ run `sudo iw dev` again and look and note the physical device numbers (`phy#{NUM
 ```bash
 sudo iw phy phy0 set netns name v0
 sudo iw phy phy1 set netns name v1
-sudo iw phy ph2 set netns name v2
+sudo iw phy phy2 set netns name v2
 ```
 
 Ensure all the interfaces are UP:
