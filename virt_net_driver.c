@@ -18,6 +18,11 @@ MODULE_VERSION("0.01");
 static struct net_device *virt_net_dev;
 static struct virt_adapter_context *context;
 
+/* get private data from wiphy struct */
+static struct virt_wiphy_priv* get_wiphy_priv(struct wiphy* wiphy)
+{
+    return (struct virt_wiphy_priv*) wiphy_priv(wiphy);
+}
 
 static int init_virt_hw_resource(struct net_device *dev)
 {
@@ -289,53 +294,73 @@ static int virt_net_driver_do_ioctl(struct net_device *dev, struct ifreq *ifr, i
     return ret;
 }
 
+static void inform_bss(struct virt_net_dev_priv* priv)
+{
+    printk(KERN_INFO "informing bss\n");
+    /* Loop through all APs known in context.  There should only be 1 for our purposes */
+    struct virt_net_dev_priv* current_ap;
+    list_for_each_entry(current_ap, &context->ap_list, ap_node)
+    {
+        printk(KERN_INFO "%s: doing info stuff\n", VIRT_NET_DRIVER_NAME);
+        struct cfg80211_bss* bss = NULL;
+        struct cfg80211_inform_bss inform_bss_data = {
+            .signal = (s32) -50,
+            .chan = &current_ap->wdev.wiphy->bands[NL80211_BAND_2GHZ]->channels[0],
+            .scan_width = NL80211_BSS_CHAN_WIDTH_20,
+        };
+
+        u8 *ie = kmalloc(current_ap->ssid_len + 2, GFP_KERNEL);
+        ie[0] = WLAN_EID_SSID;
+        ie[1] = current_ap->ssid_len;
+        memcpy(ie + 2, current_ap->ssid, current_ap->ssid_len);
+
+        u64 tsf = div_u64(ktime_get_boottime_ns(), 1000);
+        bss = cfg80211_inform_bss_data (priv->wdev.wiphy, &inform_bss_data, CFG80211_BSS_FTYPE_UNKNOWN, current_ap->bssid, tsf, WLAN_CAPABILITY_ESS, 100, ie, sizeof(ie), GFP_KERNEL);
+
+        cfg80211_put_bss(priv->wdev.wiphy, bss);
+        kfree(ie);
+    }
+}
+
 static int virt_net_driver_cfg80211_scan(struct wiphy *wiphy, struct cfg80211_scan_request *request)
 {
-    int i;
-
     printk(KERN_INFO "Virtual Wi-Fi scan initiated\n");
+    struct virt_net_dev_priv* priv = get_wiphy_priv(wiphy)->wiphy_priv;
+    if(mutex_lock_interruptible(&priv->mtx)) {
+        return -ERESTARTSYS;
+    }
 
-    
+    if (priv->scan_request != NULL) {
+        mutex_unlock(&priv->mtx);
+        return -EBUSY;
+    }
 
-    /* Simulate a Wi-Fi scan with some fake access points */
-    // for (i = 0; i < request->n_ssids; i++) {
-    //     struct cfg80211_bss *bss;
-    //     struct ieee80211_channel *channel;
-    //     uint8_t bssid[ETH_ALEN] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55};
-    //     uint32_t signal = -30;  // dBm
-    //     struct ieee80211_mgmt mgmt = {};
-    //
-    //     /* Use the first channel from the request for the fake access point */
-    //     channel = request->channels[0];
-    //
-    //     /* Set the BSSID for the fake BSS */
-    //     memcpy(mgmt.bssid, bssid, ETH_ALEN);
-    //
-    //     /* Set the frame control field to indicate a beacon frame */
-    //     mgmt.frame_control = cpu_to_le16(IEEE80211_FTYPE_MGMT | IEEE80211_STYPE_BEACON);
-    //
-    //     /* Set the timestamp field for the fake BSS */
-    //     mgmt.u.beacon.timestamp = cpu_to_le64(ktime_get_real_ns());
-    //
-    //     /* Create a fake BSS */
-    //     bss = cfg80211_inform_bss_frame(wiphy, channel, &mgmt, sizeof(mgmt), signal, GFP_KERNEL);
-    //     if (!bss) {
-    //         printk(KERN_ERR "Failed to create a fake BSS\n");
-    //         continue;
-    //     }
-    //
-    //     /* Notify the cfg80211 subsystem about the new BSS */
-    //     cfg80211_put_bss(wiphy, bss);
-    // }
+    priv->scan_request = request;
 
-    /* Notify the cfg80211 subsystem that the scan is complete */
-    //cfg80211_scan_done(request, false);
+    mutex_unlock(&priv->mtx);
 
-    printk(KERN_INFO "Virtual Wi-Fi scan complete\n");
-
+    if (!schedule_work(&priv->ws_scan)) {
+        return -EBUSY;
+    }
     return 0;
 }
 
+static void scan_routine(struct work_struct* work)
+{
+    struct virt_net_dev_priv* priv = container_of(work, struct virt_net_dev_priv, ws_scan);
+    struct cfg80211_scan_info info = {
+        .aborted = false,
+    };
+    msleep(100);
+    inform_bss(priv);
+
+    if (mutex_lock_interruptible(&priv->mtx)) {
+        return;
+    }
+    cfg80211_scan_done(priv->scan_request, &info);
+    priv->scan_request = NULL;
+    mutex_unlock(&priv->mtx);
+}
 static unsigned int simulate_assoc_delay(void) {
     /* Helper function to simulate a random association delay */
     /* Random delay in the range of 100ms to 500ms */
@@ -361,47 +386,115 @@ static int virt_wifi_send_assoc(struct net_device *dev, struct cfg80211_connect_
 }
 
 static int virt_net_driver_cfg80211_connect(struct wiphy *wiphy, struct net_device *dev, struct cfg80211_connect_params *params) {
-    struct virt_wifi_wiphy_priv *priv = wiphy_priv(wiphy);
-    struct virt_net_dev_priv *netdev_priv_data = netdev_priv(dev);
-    struct cfg80211_bss *bss;
-    struct ieee80211_channel *channel;
-    int err;
 
-    if (!params->bssid || !params->ssid) {
-        return -EINVAL;
+    printk(KERN_INFO "%s: Starting connection...\n", VIRT_NET_DRIVER_NAME);
+    struct virt_net_dev_priv *priv = get_wiphy_priv(wiphy)->wiphy_priv;
+
+    printk(KERN_INFO "%s: Init connect 1\n", VIRT_NET_DRIVER_NAME);
+
+    if(params->ssid == NULL) {
+        return -EBUSY;
     }
+    printk(KERN_INFO "%s: Init connect 2\n", VIRT_NET_DRIVER_NAME);
 
-    mutex_lock(&priv->scan_mutex);
-    bss = cfg80211_get_bss(wiphy, NULL, params->bssid, params->ssid, params->ssid_len, IEEE80211_BSS_TYPE_ANY, IEEE80211_PRIVACY_ANY);
-    mutex_unlock(&priv->scan_mutex);
-
-    if (!bss) {
-        return -ENOENT;
+    if(mutex_lock_interruptible(&priv->mtx)) {
+        return -ERESTARTSYS;
     }
+    printk(KERN_INFO "%s: Init connect 3\n", VIRT_NET_DRIVER_NAME);
 
-    channel = bss->channel;
-    if (channel->flags & IEEE80211_CHAN_DISABLED) {
-        cfg80211_put_bss(wiphy, bss);
-        return -EINVAL;
+    memcpy(priv->req_ssid, params->ssid, params->ssid_len);
+    printk(KERN_INFO "%s: Init connect 4\n", VIRT_NET_DRIVER_NAME);
+    priv->ssid[params->ssid_len] = 0;
+    priv->connect_request = params;
+
+    printk(KERN_INFO "%s: Init connect 5\n", VIRT_NET_DRIVER_NAME);
+    mutex_unlock(&priv->mtx);
+
+    printk(KERN_INFO "%s: Init connect 6\n", VIRT_NET_DRIVER_NAME);
+    if (!schedule_work(&priv->ws_connect)) {
+        return -EBUSY;
     }
-
-    netdev_priv_data->assoc_bss = bss;
-    netdev_priv_data->channel = channel;
-    netdev_priv_data->state = VIRT_WIFI_ASSOCIATING;
-
-    err = virt_wifi_send_assoc(dev, params);
-    if (err) {
-        cfg80211_put_bss(wiphy, bss);
-        netdev_priv_data->assoc_bss = NULL;
-        netdev_priv_data->channel = NULL;
-        netdev_priv_data->state = VIRT_WIFI_DISCONNECTED;
-        return err;
-    }
-
-    cfg80211_connect_result(dev, params->bssid, params->ie, params->ie_len, NULL, 0, WLAN_STATUS_SUCCESS, GFP_KERNEL);
 
     return 0;
 }
+
+static void connect_routine(struct work_struct* work)
+{
+    printk(KERN_INFO "%s: CONNECTION ROUTINE 1\n", VIRT_NET_DRIVER_NAME);
+    struct virt_net_dev_priv* priv = container_of(work, struct virt_net_dev_priv, ws_connect);
+    if (mutex_lock_interruptible(&priv->mtx)) {
+        return;
+    }
+
+    struct virt_net_dev_priv* ap = NULL;
+    int i = 0;
+    list_for_each_entry(ap, &context->ap_list, ap_node)
+    {
+        printk(KERN_INFO "%s: Looping %d\n", VIRT_NET_DRIVER_NAME, i);
+        if (memcpy(ap->ssid, priv->req_ssid, sizeof(ap->ssid))) {
+            printk(KERN_INFO "%s: CONNECTION ROUTINE 2\n", VIRT_NET_DRIVER_NAME);
+
+            printk(KERN_INFO "%s: CONNECTION ROUTINE 3\n", VIRT_NET_DRIVER_NAME);
+
+            inform_bss(priv);
+            printk(KERN_INFO "%s: CONNECTION ROUTINE 4\n", VIRT_NET_DRIVER_NAME);
+            cfg80211_connect_bss(priv->netdev, NULL, NULL, NULL, 0, NULL, 0, WLAN_STATUS_SUCCESS, GFP_KERNEL, NL80211_TIMEOUT_UNSPECIFIED);
+            printk(KERN_INFO "%s: CONNECTION ROUTINE 5\n", VIRT_NET_DRIVER_NAME);
+
+            priv->state = VIRT_WIFI_CONNECTED;
+            // // cfg80211_connect_result(priv->netdev, ap->bssid, NULL, 0, NULL, 0, WLAN_STATUS_SUCCESS, GFP_KERNEL);
+            //
+            memcpy(priv->ssid, priv->req_ssid, priv->ssid_len);
+            printk(KERN_INFO "%s: CONNECTION ROUTINE 6\n", VIRT_NET_DRIVER_NAME);
+            memcpy(priv->bssid, ap->bssid, ETH_ALEN);
+            printk(KERN_INFO "%s: CONNECTION ROUTINE 7\n", VIRT_NET_DRIVER_NAME);
+
+            if (mutex_lock_interruptible(&ap->mtx)) {
+                mutex_unlock(&priv->mtx);
+                return;
+            }
+            printk(KERN_INFO "%s: CONNECTION ROUTINE 8\n", VIRT_NET_DRIVER_NAME);
+            list_add_tail(&priv->bss_list, &ap->bss_list);
+            printk(KERN_INFO "%s: CONNECTION ROUTINE 9\n", VIRT_NET_DRIVER_NAME);
+            mutex_unlock(&ap->mtx);
+            mutex_unlock(&priv->mtx);
+            printk(KERN_INFO "%s: CONNECTION ROUTINE 10\n", VIRT_NET_DRIVER_NAME);
+            return;
+        }
+    }
+
+    mutex_unlock(&priv->mtx);
+    printk(KERN_INFO "%s: CONNECTION ROUTINE ABOUT TO TIMEOUT\n", VIRT_NET_DRIVER_NAME);
+    // cfg80211_connect_timeout(priv->netdev, NULL, NULL, 0, GFP_KERNEL, NL80211_TIMEOUT_SCAN);
+
+}
+
+/* get information about an interface on the network */
+/* does not give real information back, but dummy info */
+static int virt_get_station(struct wiphy* wiphy, struct net_device* dev, const u8* net_addr, struct station_info* info)
+{
+    struct virt_net_dev_priv* priv = netdev_priv(dev);
+    struct virt_net_dev_priv* iterator = NULL;
+
+    // iterate over all known interfaces
+    list_for_each_entry(iterator, &context->if_list, if_node)
+    {
+        // if one matches the requested mac address, return dummy info
+        if (!memcmp(net_addr, iterator->netdev->dev_addr, ETH_ALEN)) {
+            info->filled = BIT_ULL(NL80211_STA_INFO_TX_PACKETS) | BIT_ULL(NL80211_STA_INFO_RX_PACKETS) | BIT_ULL(NL80211_STA_INFO_TX_FAILED) | BIT_ULL(NL80211_STA_INFO_TX_BYTES) | BIT_ULL(NL80211_STA_INFO_RX_BYTES);
+            info->tx_packets = 1;
+            info->rx_packets = 1;
+            info->tx_failed = 1;
+            info->tx_bytes = 1;
+            info->rx_bytes = 1;
+            return 0;
+        }
+    }
+
+    // if none match requested mac address, return (machine is not on network)
+    return -ENONET;
+}
+
 
 static unsigned int simulate_disassoc_delay(void) {
     /* Helper function to simulate a random disassociation delay */
@@ -434,21 +527,30 @@ static void virt_net_disconnect(struct virt_net_dev_priv *priv) {
 
 static int virt_net_driver_cfg80211_disconnect(struct wiphy *wiphy, struct net_device *dev, u16 reason_code)
 {
-    struct virt_net_dev_priv *priv = wiphy_priv(wiphy);
-
-    if (!priv->connect_params) {
-        printk(KERN_INFO "Virtual Wi-Fi is not connected, nothing to disconnect\n");
-        return -ENOTCONN;
+    struct virt_net_dev_priv* priv = get_wiphy_priv(wiphy)->wiphy_priv;
+    if (mutex_lock_interruptible(&priv->mtx)) {
+        return -ERESTARTSYS;
     }
 
-    /* Perform disconnection */
-    virt_net_disconnect(priv);
+    priv->disconnect_code = reason_code;
 
-    /* Report disconnection status to cfg80211 */
-    cfg80211_disconnected(dev, reason_code, NULL, 0, false, GFP_KERNEL);
-
-    printk(KERN_INFO "Virtual Wi-Fi disconnected\n");
+    mutex_unlock(&priv->mtx);
+    if (!schedule_work(&priv->ws_disconnect)) {
+        return -EBUSY;
+    }
     return 0;
+}
+
+static void disconnect_routine(struct work_struct* work)
+{
+    struct virt_net_dev_priv* priv = container_of(work, struct virt_net_dev_priv, ws_disconnect);
+    if (mutex_lock_interruptible(&priv->mtx)) {
+        return;
+    }
+
+    cfg80211_disconnected(priv->netdev, priv->disconnect_code, NULL, 0, true, GFP_KERNEL);
+    priv->disconnect_code = 0;
+    mutex_unlock(&priv->mtx);
 }
 
 static void virt_net_driver_get_drvinfo(struct net_device *dev, struct ethtool_drvinfo *info)
@@ -486,8 +588,8 @@ static const struct net_device_ops virt_net_dev_ops = {
     .ndo_open = virt_net_driver_open,
     .ndo_stop = virt_net_driver_stop,
     .ndo_start_xmit = virt_net_driver_start_xmit,
-    .ndo_set_mac_address = virt_net_driver_set_mac_address,
-    .ndo_do_ioctl = virt_net_driver_do_ioctl,
+    // .ndo_set_mac_address = virt_net_driver_set_mac_address,
+    // .ndo_do_ioctl = virt_net_driver_do_ioctl,
 };
 
 static const struct ethtool_ops virt_net_ethtool_ops = {
@@ -510,6 +612,8 @@ static int virt_if_add(struct wiphy* wiphy, int identifier)
     /* Private values of new net device */
     struct virt_net_dev_priv *priv = NULL;
 
+    struct virt_wiphy_priv* wpriv = NULL;
+
     /* Allocating new device */
     virt_net_dev = alloc_netdev(sizeof(struct virt_net_dev_priv), NET_DEV_NAME, NET_NAME_ENUM, ether_setup);
     if (!virt_net_dev) {
@@ -528,23 +632,23 @@ static int virt_if_add(struct wiphy* wiphy, int identifier)
 
     /* Getting priv values */
     priv = netdev_priv(virt_net_dev);
-
+    wpriv = get_wiphy_priv(wiphy);
+    wpriv->wiphy_priv = priv;
     /* Setting private values */
     priv->netdev = virt_net_dev;
 
     /* Wireless_dev values */
     priv->wdev.wiphy = wiphy;
-    // STA by default
+    priv->wdev.netdev = virt_net_dev;
     priv->wdev.iftype = NL80211_IFTYPE_STATION;
     priv->netdev->ieee80211_ptr = &priv->wdev;
-    
+    priv->scan_request = NULL;
     priv->netdev->features |= NETIF_F_HW_CSUM;
 
 	/* Set the device's name */
-    char name[ETH_ALEN];
-    snprintf(name, ETH_ALEN, "%s%d", VIRT_NET_INTF_NAME, identifier);
-    strlcpy(virt_net_dev->name, name, sizeof(virt_net_dev->name));
-    memcpy((void*) priv->netdev->dev_addr, name, ETH_ALEN);
+    char hw_name[ETH_ALEN + 1] = {0};
+    snprintf(hw_name + 1, ETH_ALEN, "%s%d", VIRT_NET_INTF_NAME, identifier);
+    eth_hw_addr_set(priv->netdev, hw_name);
 
     /* Assign ops */
     virt_net_dev->netdev_ops = &virt_net_dev_ops;
@@ -560,20 +664,18 @@ static int virt_if_add(struct wiphy* wiphy, int identifier)
         return -ENOMEM;
     }
 
-    /* init mutex */
-    mutex_init(&priv->mtx);
-
-    /* init other values) */
-    // the device starts as "not connected" so these values are 0
     memset(priv->bssid, 0, ETH_ALEN);
     memset(priv->ssid, 0, IEEE80211_MAX_SSID_LEN);
-
+    priv->state = VIRT_WIFI_DISCONNECTED;
+    priv->ap = NULL;
+    /* init mutex and work*/
+    mutex_init(&priv->mtx);
+    INIT_WORK(&priv->ws_scan, scan_routine);
+    INIT_WORK(&priv->ws_connect, connect_routine);
+    INIT_WORK(&priv->ws_disconnect, disconnect_routine);
 
     /* init buffers */
     init_virt_hw_resource(priv->netdev);
-
-    /* init connection info */ 
-    /* init timers */
 
     /* Add to interface list */
     mutex_lock(&context->mtx);
@@ -613,6 +715,10 @@ static int virt_if_delete(struct virt_net_dev_priv* priv)
         ap_terminate(wiphy, priv->netdev, 0);
     } 
 
+    cancel_work_sync(&priv->ws_scan);
+    cancel_work_sync(&priv->ws_connect);
+    cancel_work_sync(&priv->ws_disconnect);
+
     //TODO: Error checking -- but I'm just happy it works for now ;_;
     mutex_lock(&priv->mtx);
     // stop transfer queues and queued work
@@ -645,6 +751,7 @@ static struct cfg80211_ops wifi_dev_ops = {
     .scan = virt_net_driver_cfg80211_scan,
     .connect = virt_net_driver_cfg80211_connect,
     .disconnect = virt_net_driver_cfg80211_disconnect,
+    .get_station = virt_get_station,
     .start_ap = ap_init,
     .stop_ap = ap_terminate,
 };
@@ -700,10 +807,8 @@ static struct wiphy* wiphy_add(void)
     int error = 0;
     struct wiphy* wiphy = NULL;
 
-    // setting default wiphy options 
-
     // allocate new wiphy structure
-    wiphy = wiphy_new(&wifi_dev_ops, 0);
+    wiphy = wiphy_new_nm(&wifi_dev_ops, 0, NULL);
     if (!wiphy) {
         printk(KERN_ERR "%s: Failed to allocate new wiphy device\n", VIRT_NET_DRIVER_NAME);
         return NULL;
@@ -741,6 +846,7 @@ static int ap_init(struct wiphy* wiphy, struct net_device* dev, struct cfg80211_
     priv->ssid_len = ap_settings->ssid_len;
     memcpy(priv->ssid, ap_settings->ssid, ap_settings->ssid_len);
     memcpy(priv->bssid, priv->netdev->dev_addr, ETH_ALEN);
+    printk(KERN_INFO "%s: bssid changed: %x\n", priv->bssid);
 
     // add to ap list
     list_add_tail(&priv->ap_node, &context->ap_list);
@@ -749,6 +855,7 @@ static int ap_init(struct wiphy* wiphy, struct net_device* dev, struct cfg80211_
     INIT_LIST_HEAD(&priv->bss_list);
 
     priv->is_ap = true;
+
     return 0;
 }
 
