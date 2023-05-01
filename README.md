@@ -72,22 +72,146 @@ Check if the virtual interfaces were created:
 ifconfig
 ```
 
-Bring the virtual interfaces up:
+You should see three new interfaces like the example below:
 ```bash
-sudo ip link set vif0 up
-sudo ip link set vif1 up
-sudo ip link set vif2 up
+vif0: flags=4099<UP,BROADCAST,MULTICAST>  mtu 1500
+        ether 00:76:69:66:30:00  txqueuelen 1000  (Ethernet)
+        RX packets 0  bytes 0 (0.0 B)
+        RX errors 0  dropped 0  overruns 0  frame 0
+        TX packets 0  bytes 0 (0.0 B)
+        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0
+
+vif1: flags=4099<UP,BROADCAST,MULTICAST>  mtu 1500
+        ether 00:76:69:66:31:00  txqueuelen 1000  (Ethernet)
+        RX packets 0  bytes 0 (0.0 B)
+        RX errors 0  dropped 0  overruns 0  frame 0
+        TX packets 0  bytes 0 (0.0 B)
+        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0
+
+vif2: flags=4099<UP,BROADCAST,MULTICAST>  mtu 1500
+        ether 00:76:69:66:32:00  txqueuelen 1000  (Ethernet)
+        RX packets 0  bytes 0 (0.0 B)
+        RX errors 0  dropped 0  overruns 0  frame 0
+        TX packets 0  bytes 0 (0.0 B)
+        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0
 ```
 
-Configure vif0 to be an AP:
+Check if the wifi devices have been properly configured. You should see the same interface names as the `ifonfig` output.
+
 ```bash
-sudo hostapd -B hostapd.conf
+sudo iw dev
+sudo iw list
 ```
 
-To remove the virtual network driver module, use rmmod:
+Check if the `get_station` function works:
+
+```bash
+sudo iw dev vif0 station get 00:76:69:66:30:00
+```
+
+The output should look something like:
+
+```bash
+Station 00:76:69:66:30:00 (on vif0)
+	rx bytes:	1
+	rx packets:	1
+	tx bytes:	1
+	tx packets:	1
+	tx failed:	1
+	current time:	1682978276569 ms
+```
+
+To test if the scan and connect functions work properly, we must put each interface in their own network namespaces.
+
+Add network namespaces:
+
+```bash
+sudo ip netns add v0
+sudo ip netns add v1
+sudo ip netns add v2
+```
+run `sudo iw dev` again and look and note the physical device numbers (`phy#{NUMBER}`). There should be three consecutive physical numbers (e.g. `phy#0 phy#1 phy#2`). Use these physical device numbers to add each device to its respective namespace:
+
+```bash
+sudo iw phy phy0 set netns name v0
+sudo iw phy phy1 set netns name v1
+sudo iw phy ph2 set netns name v2
+```
+
+Ensure all the interfaces are UP:
+
+```bash
+sudo ip netns exec v0 ip link set vif0 up
+sudo ip netns exec v1 ip link set vif1 up
+sudo ip netns exec v2 ip link set vif2 up
+```
+
+Configure vif0 to be an access point:
+
+```bash
+sudo ip netns exec v0 hostapd -B hostapd.conf
+```
+
+Check if vif0 has been successfully configured as an AP:
+
+```bash
+sudo ip netns exec v0 iw dev
+```
+
+The output should say `ssid VAP` and `type AP`:
+
+```bash
+phy#0
+	Interface vif0
+		ifindex 3
+		wdev 0x1
+		addr 00:76:69:66:30:00
+		ssid VAP
+		type AP
+```
+
+Give each interface an IP:
+
+```bash
+sudo ip netns exec v0 ip addr add 10.10.10.1/24 dev vif0
+sudo ip netns exec v1 ip addr add 10.10.10.2/24 dev vif1
+sudo ip netns exec v2 ip addr add 10.10.10.3/24 dev vif2
+```
+
+Perform a scan from vif1:
+
+```bash
+sudo ip netns exec v1 iw dev vif1 scan
+```
+
+Connect to vif0 from vif1:
+
+```bash
+sudo ip netns exec v1 iw dev vif1 connect VAP
+```
+
+Check vif1's link status:
+
+```bash
+sudo ip netns exec v1 iw dev vif1 link
+```
+
+Remove the virtual network driver module:
 
 ```bash
 sudo rmmod virt_net_driver
+```
+
+Re-insert the module:
+
+```bash
+sudo insmod virt_net_driver.ko
+```
+
+Ping v2 from v1:
+
+```bash
+ping -I 10.10.10.2 10.10.10.1
 ```
 
 ## Developer Information
