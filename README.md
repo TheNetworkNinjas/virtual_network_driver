@@ -208,6 +208,13 @@ Re-insert the module:
 sudo insmod virt_net_driver.ko
 ```
 
+Give each interface each IP
+```bash
+ip addr add 10.10.10.1/24 dev vif0
+ip addr add 10.10.10.2/24 dev vif1
+ip addr add 10.10.10.3/24 dev vif2
+```
+
 Ping v2 from v1:
 
 ```bash
