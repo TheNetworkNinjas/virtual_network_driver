@@ -439,10 +439,12 @@ static void inform_bss(struct virt_net_dev_priv* priv)
 /*
  * Function: virt_net_driver_cfg_80211_scan
  * ________________________
- * Description: initiates a scan of nearby wireless networks
+ * Description: initiates a dummy scan of nearby wireless networks
  * Parameter(s): wiphy - pointer to the wireless device struct
  *               request - pointer to the scan request struct
  * Returns: 0 on success, -ERESTARTSYS if the mutex lock is interrupted, -EBUSY if the scan request is already in progress
+ *
+ * adapted from https://github.com/apriorit/Dummy_fullmac_linux_wifi_driver/blob/master/virtualwifi.c
  */
 static int virt_net_driver_cfg80211_scan(struct wiphy *wiphy, struct cfg80211_scan_request *request)
 {
@@ -477,9 +479,11 @@ static int virt_net_driver_cfg80211_scan(struct wiphy *wiphy, struct cfg80211_sc
 /*
  * Function: scan_routine
  * ________________________
- * Description: scans nearby wireless networks
+ * Description: performs dummy scan of nearby wireless networks
  * Parameter(s): work - pointer to the work struct
  * Returns: void
+ * 
+ * Adapted from https://github.com/apriorit/Dummy_fullmac_linux_wifi_driver/blob/master/virtualwifi.c
  */
 static void scan_routine(struct work_struct* work)
 {
@@ -546,6 +550,8 @@ static int virt_wifi_send_assoc(struct net_device *dev, struct cfg80211_connect_
  * Parameter(s): dev - pointer to the network device struct
                  params - pointer to the connect parameters struct
  * Returns: a random delay between 100ms and 500ms
+ *
+ * Adapted from https://github.com/apriorit/Dummy_fullmac_linux_wifi_driver/blob/master/virtualwifi.c
  */
 static int virt_net_driver_cfg80211_connect(struct wiphy *wiphy, struct net_device *dev, struct cfg80211_connect_params *params) {
 
@@ -592,6 +598,8 @@ static int virt_net_driver_cfg80211_connect(struct wiphy *wiphy, struct net_devi
  *              and simulates an association delay. It updates the state and copies the SSID and BSSID into the priv struct
  * Parameter(s): work - the work struct scheduled to run the connect_routine
  * Returns: void
+ *
+ * Adapted for multiple interfaces from https://github.com/apriorit/Dummy_fullmac_linux_wifi_driver/blob/master/virtualwifi.c
  */
 static void connect_routine(struct work_struct* work)
 {
@@ -738,6 +746,8 @@ static void virt_net_disconnect(struct virt_net_dev_priv *priv) {
  *               dev - pointer to the net_device struct
  *               reason_code - reason for the disconnection
  * Returns: 0 on success, -ERESTARTSYS if interrupted, -EBUSY if work is already schedule
+ *
+ * Adapted from https://github.com/apriorit/Dummy_fullmac_linux_wifi_driver/blob/master/virtualwifi.c
  */
 static int virt_net_driver_cfg80211_disconnect(struct wiphy *wiphy, struct net_device *dev, u16 reason_code)
 {
@@ -907,6 +917,7 @@ static int virt_if_add(struct wiphy* wiphy, int identifier)
 	/* Set the device's name */
     char hw_name[ETH_ALEN + 1] = {0};
     snprintf(hw_name + 1, ETH_ALEN, "%s%d", VIRT_NET_INTF_NAME, identifier);
+    // This function does not work on Kernel version < 5.4. On kernel < 5.4, use memcpy
     eth_hw_addr_set(priv->netdev, hw_name);
 
     /* Assign ops */
@@ -988,6 +999,7 @@ static int virt_if_delete(struct virt_net_dev_priv* priv)
         ap_terminate(wiphy, priv->netdev, 0);
     } 
 
+    // stop pending work
     cancel_work_sync(&priv->ws_scan);
     cancel_work_sync(&priv->ws_connect);
     cancel_work_sync(&priv->ws_disconnect);
@@ -996,9 +1008,6 @@ static int virt_if_delete(struct virt_net_dev_priv* priv)
     mutex_lock(&priv->mtx);
     // stop transfer queues and queued work
     netif_stop_queue(priv->netdev);
-
-    // stop pending scans
-    // TODO: after scan is implemented
 
     mutex_unlock(&priv->mtx);
 
